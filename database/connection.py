@@ -1,11 +1,10 @@
 """
-database.py — Database connection module for Inventory Management System.
+connection.py — MySQL connection helper for the Inventory Management System.
 
-Provides a reusable MySQL connection helper with basic error handling
-and a lightweight context-manager wrapper for safe cursor usage.
+Provides a reusable connection helper with basic error handling.
 
 Usage:
-    from database import get_connection
+    from database import get_connection, close_connection
 
     conn = get_connection()
     if conn and conn.is_connected():
@@ -13,7 +12,7 @@ Usage:
         cursor.execute("SELECT * FROM products")
         rows = cursor.fetchall()
         cursor.close()
-        conn.close()
+        close_connection(conn)
 """
 
 import mysql.connector
@@ -42,12 +41,9 @@ def get_connection():
     try:
         connection = mysql.connector.connect(**DB_CONFIG)
         if connection.is_connected():
-            server_info = connection.get_server_info()
-            print(f"[✔] Connected to MySQL Server version {server_info}")
-            print(f"[✔] Database: {DB_CONFIG['database']}")
             return connection
     except Error as e:
-        print(f"[✖] MySQL Connection Error: {e}")
+        print(f"[DB] Connection Error: {e}")
         return None
 
 
@@ -55,7 +51,6 @@ def close_connection(connection):
     """Safely close an existing MySQL connection."""
     if connection and connection.is_connected():
         connection.close()
-        print("[✔] MySQL connection closed.")
 
 
 # ── Quick Verification ───────────────────────────────────────
@@ -71,21 +66,20 @@ if __name__ == "__main__":
             cursor = conn.cursor()
             cursor.execute("SELECT DATABASE();")
             db_name = cursor.fetchone()
-            print(f"[✔] Active database: {db_name[0]}")
+            print(f"[OK] Active database: {db_name[0]}")
 
-            # List existing tables
             cursor.execute("SHOW TABLES;")
             tables = cursor.fetchall()
             if tables:
-                print(f"[✔] Tables found: {', '.join(t[0] for t in tables)}")
+                print(f"[OK] Tables found: {', '.join(t[0] for t in tables)}")
             else:
                 print("[!] No tables found — run schema.sql first.")
 
             cursor.close()
         except Error as e:
-            print(f"[✖] Query error: {e}")
+            print(f"[ERROR] Query error: {e}")
         finally:
             close_connection(conn)
     else:
-        print("[✖] Could not establish a database connection.")
-        print("    → Make sure MySQL is running and DB_CONFIG is correct.")
+        print("[ERROR] Could not establish a database connection.")
+        print("    -> Make sure MySQL is running and DB_CONFIG is correct.")
