@@ -1,23 +1,23 @@
 """
-products_screen.py — Product management screen UI (no business logic).
+products_screen.py — Product management screen with popover CRUD and stock-in/out.
 """
 
 import tkinter as tk
 from tkinter import ttk
-from config import BG, CARD_BG, BTN_SUCCESS, BTN_WARNING, BTN_DANGER, FONT_FAMILY
+from config import (BG, CARD_BG, BTN_SUCCESS, BTN_WARNING, BTN_DANGER,
+                    BTN_PRIMARY, FONT_FAMILY, ROW_LOW_STOCK, ROW_EXPIRED)
+from gui.popover import Popover
 
 
 class ProductsScreen(tk.Frame):
-    """Product list with Treeview, CRUD form, and search bar."""
+    """Product list with Treeview, popover CRUD, search, and stock-in/out."""
 
     def __init__(self, parent, controller):
         super().__init__(parent, bg=BG)
         self.controller = controller
-
-        # ── Products handler reference (set by App) ──────────
         self.handler = None
 
-        # ── Header + search ──────────────────────────────────
+        # ── Header + toolbar ─────────────────────────────────
         header = tk.Frame(self, bg=BG)
         header.pack(fill="x", padx=24, pady=(20, 10))
 
@@ -25,14 +25,62 @@ class ProductsScreen(tk.Frame):
                  font=(FONT_FAMILY, 18, "bold"),
                  bg=BG, fg="#2c3e50").pack(side="left")
 
-        # Search bar (right side)
-        search_frame = tk.Frame(header, bg=BG)
-        search_frame.pack(side="right")
+        # Toolbar buttons (right side)
+        toolbar = tk.Frame(header, bg=BG)
+        toolbar.pack(side="right")
+
+        btn_style = dict(font=(FONT_FAMILY, 9, "bold"), fg="white",
+                         relief="flat", cursor="hand2", bd=0, padx=10)
+
+        tk.Button(toolbar, text="+ Add Product", bg=BTN_SUCCESS,
+                  activebackground="#219a52",
+                  command=self._open_add, **btn_style
+                  ).pack(side="left", ipady=3, padx=2)
+
+        tk.Button(toolbar, text="Edit", bg=BTN_WARNING,
+                  activebackground="#cf6d17",
+                  command=self._open_edit, **btn_style
+                  ).pack(side="left", ipady=3, padx=2)
+
+        tk.Button(toolbar, text="Delete", bg=BTN_DANGER,
+                  activebackground="#c0392b",
+                  command=self._on_delete, **btn_style
+                  ).pack(side="left", ipady=3, padx=2)
+
+        # Spacer
+        tk.Frame(toolbar, bg=BG, width=12).pack(side="left")
+
+        tk.Button(toolbar, text="▲ Stock In", bg="#27ae60",
+                  activebackground="#219a52",
+                  command=lambda: self._open_stock("Stock-In"), **btn_style
+                  ).pack(side="left", ipady=3, padx=2)
+
+        tk.Button(toolbar, text="▼ Stock Out", bg="#e74c3c",
+                  activebackground="#c0392b",
+                  command=lambda: self._open_stock("Stock-Out"), **btn_style
+                  ).pack(side="left", ipady=3, padx=2)
+
+        # Spacer
+        tk.Frame(toolbar, bg=BG, width=12).pack(side="left")
+
+        tk.Button(toolbar, text="Export CSV", bg="#7f8c8d",
+                  activebackground="#6c7a7d",
+                  command=lambda: self._on_export("csv"), **btn_style
+                  ).pack(side="left", ipady=3, padx=2)
+
+        tk.Button(toolbar, text="Export Excel", bg="#2c3e50",
+                  activebackground="#1a252f",
+                  command=lambda: self._on_export("xlsx"), **btn_style
+                  ).pack(side="left", ipady=3, padx=2)
+
+        # ── Search bar ──────────────────────────────────────
+        search_frame = tk.Frame(self, bg=BG)
+        search_frame.pack(fill="x", padx=24, pady=(0, 6))
 
         tk.Label(search_frame, text="Search:",
                  font=(FONT_FAMILY, 10), bg=BG, fg="#555").pack(side="left")
         self.entry_search = tk.Entry(search_frame, font=(FONT_FAMILY, 10),
-                                     width=22, relief="solid", bd=1)
+                                     width=28, relief="solid", bd=1)
         self.entry_search.pack(side="left", padx=(6, 6), ipady=2)
         self.entry_search.bind("<KeyRelease>", lambda e: self._on_search())
 
@@ -42,18 +90,24 @@ class ProductsScreen(tk.Frame):
 
         # ── Treeview ─────────────────────────────────────────
         tree_frame = tk.Frame(self, bg=BG)
-        tree_frame.pack(fill="both", expand=True, padx=24)
+        tree_frame.pack(fill="both", expand=True, padx=24, pady=(0, 20))
 
-        cols = ("ID", "Name", "Description", "Stock", "Unit")
+        cols = ("ID", "Name", "Stock", "Unit", "Warehouse", "Category",
+                "Threshold", "Expiry", "Status", "Batch")
         self.tree = ttk.Treeview(tree_frame, columns=cols,
-                                 show="headings", height=12,
+                                 show="headings", height=16,
                                  selectmode="browse")
 
-        col_widths = {"ID": 50, "Name": 180, "Description": 260,
-                      "Stock": 80, "Unit": 70}
+        col_widths = {"ID": 40, "Name": 150, "Stock": 55, "Unit": 50,
+                      "Warehouse": 110, "Category": 100, "Threshold": 65,
+                      "Expiry": 90, "Status": 65, "Batch": 90}
         for c in cols:
             self.tree.heading(c, text=c)
-            self.tree.column(c, width=col_widths.get(c, 100), anchor="center")
+            self.tree.column(c, width=col_widths.get(c, 80), anchor="center")
+
+        # Row tags for highlighting
+        self.tree.tag_configure("low_stock", background=ROW_LOW_STOCK)
+        self.tree.tag_configure("expired", background=ROW_EXPIRED)
 
         scroll_y = ttk.Scrollbar(tree_frame, orient="vertical",
                                  command=self.tree.yview)
@@ -61,152 +115,91 @@ class ProductsScreen(tk.Frame):
         self.tree.pack(side="left", fill="both", expand=True)
         scroll_y.pack(side="right", fill="y")
 
-        # Clicking a row populates the form
+        self._selected_id = None
         self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
 
-        # ── Entry fields panel ───────────────────────────────
-        form = tk.Frame(self, bg=CARD_BG, bd=0,
-                        highlightbackground="#ddd", highlightthickness=1)
-        form.pack(fill="x", padx=24, pady=(10, 20))
-
-        # Row 1 — Name, Unit, Stock
-        r1 = tk.Frame(form, bg=CARD_BG)
-        r1.pack(fill="x", padx=16, pady=(12, 4))
-
-        tk.Label(r1, text="Name:", font=(FONT_FAMILY, 10),
-                 bg=CARD_BG, fg="#555").pack(side="left")
-        self.entry_name = tk.Entry(r1, font=(FONT_FAMILY, 10), width=28,
-                                   relief="solid", bd=1)
-        self.entry_name.pack(side="left", padx=(6, 20))
-
-        tk.Label(r1, text="Unit:", font=(FONT_FAMILY, 10),
-                 bg=CARD_BG, fg="#555").pack(side="left")
-        self.entry_unit = tk.Entry(r1, font=(FONT_FAMILY, 10), width=10,
-                                   relief="solid", bd=1)
-        self.entry_unit.insert(0, "pcs")
-        self.entry_unit.pack(side="left", padx=(6, 20))
-
-        tk.Label(r1, text="Stock:", font=(FONT_FAMILY, 10),
-                 bg=CARD_BG, fg="#555").pack(side="left")
-        self.entry_stock = tk.Entry(r1, font=(FONT_FAMILY, 10), width=8,
-                                    relief="solid", bd=1)
-        self.entry_stock.pack(side="left", padx=(6, 0))
-
-        # Row 2 — Description
-        r2 = tk.Frame(form, bg=CARD_BG)
-        r2.pack(fill="x", padx=16, pady=(4, 8))
-
-        tk.Label(r2, text="Description:", font=(FONT_FAMILY, 10),
-                 bg=CARD_BG, fg="#555").pack(side="left")
-        self.entry_desc = tk.Entry(r2, font=(FONT_FAMILY, 10), width=60,
-                                   relief="solid", bd=1)
-        self.entry_desc.pack(side="left", padx=(6, 0), fill="x", expand=True)
-
-        # Row 3 — Buttons
-        r3 = tk.Frame(form, bg=CARD_BG)
-        r3.pack(fill="x", padx=16, pady=(4, 12))
-
-        btn_style = dict(font=(FONT_FAMILY, 10, "bold"), fg="white",
-                         relief="flat", cursor="hand2", bd=0, padx=16)
-
-        tk.Button(r3, text="Add Product", bg=BTN_SUCCESS,
-                  activebackground="#219a52",
-                  command=lambda: self._delegate("add"), **btn_style
-                  ).pack(side="left", ipady=4, padx=(0, 8))
-
-        tk.Button(r3, text="Update Product", bg=BTN_WARNING,
-                  activebackground="#cf6d17",
-                  command=lambda: self._delegate("update"), **btn_style
-                  ).pack(side="left", ipady=4, padx=(0, 8))
-
-        tk.Button(r3, text="Delete Product", bg=BTN_DANGER,
-                  activebackground="#c0392b",
-                  command=lambda: self._delegate("delete"), **btn_style
-                  ).pack(side="left", ipady=4, padx=(0, 8))
-
-        tk.Button(r3, text="Clear Fields", bg="#95a5a6",
-                  activebackground="#7f8c8d",
-                  command=self.clear_fields, **btn_style
-                  ).pack(side="right", ipady=4)
-
-        # Track selected product ID
-        self._selected_id = None
-
     # ── View interface methods ───────────────────────────────
-    def get_form_data(self):
-        """Return dict with current form field values."""
-        return {
-            "name": self.entry_name.get().strip(),
-            "description": self.entry_desc.get().strip(),
-            "stock": self.entry_stock.get().strip(),
-            "unit": self.entry_unit.get().strip(),
-        }
-
     def get_selected_id(self):
-        """Return the currently selected product ID."""
         return self._selected_id
 
     def get_search_term(self):
-        """Return the current search field text."""
         return self.entry_search.get().strip()
 
     def populate_table(self, rows):
-        """Clear and repopulate the product Treeview."""
+        """
+        Clear and repopulate the Treeview.
+        rows: list of (id, name, desc, stock, unit, warehouse, category,
+                       threshold, expiry_date, expiry_status, mfg_date, batch)
+        """
+        self._selected_id = None
         for item in self.tree.get_children():
             self.tree.delete(item)
+
         for row in rows:
-            self.tree.insert("", "end", values=row)
+            # row indices: 0=id, 1=name, 2=desc, 3=stock, 4=unit,
+            #   5=warehouse, 6=category, 7=threshold,
+            #   8=expiry_date, 9=expiry_status, 10=mfg_date, 11=batch
+            display = (
+                row[0], row[1], row[3], row[4],     # ID, Name, Stock, Unit
+                row[5], row[6],                       # Warehouse, Category
+                row[7],                               # Threshold
+                row[8] if row[8] else "—",            # Expiry Date
+                row[9],                               # Status
+                row[11] if row[11] else "—",           # Batch
+            )
 
-    def clear_fields(self):
-        """Clear all form fields and deselect the Treeview row."""
-        self._selected_id = None
-        for entry in (self.entry_name, self.entry_desc,
-                      self.entry_stock, self.entry_unit):
-            entry.delete(0, tk.END)
-        self.entry_unit.insert(0, "pcs")
-        for sel in self.tree.selection():
-            self.tree.selection_remove(sel)
+            tags = ()
+            if row[9] == "Expired":
+                tags = ("expired",)
+            elif row[3] < row[7]:  # stock < threshold
+                tags = ("low_stock",)
 
-    def clear_search(self):
-        """Clear the search field."""
-        self.entry_search.delete(0, tk.END)
+            self.tree.insert("", "end", values=display, tags=tags)
 
     def on_show(self):
-        """Called when this screen becomes visible."""
         if self.handler:
             self.handler.refresh()
 
     # ── Internal callbacks ───────────────────────────────────
     def _on_tree_select(self, _event):
-        """Populate form from selected Treeview row."""
-        selection = self.tree.selection()
-        if not selection:
-            return
-        values = self.tree.item(selection[0], "values")
-        self._selected_id = values[0]
-
-        self.entry_name.delete(0, tk.END)
-        self.entry_name.insert(0, values[1])
-
-        self.entry_desc.delete(0, tk.END)
-        self.entry_desc.insert(0, values[2] if values[2] else "")
-
-        self.entry_stock.delete(0, tk.END)
-        self.entry_stock.insert(0, values[3])
-
-        self.entry_unit.delete(0, tk.END)
-        self.entry_unit.insert(0, values[4])
+        sel = self.tree.selection()
+        if sel:
+            self._selected_id = self.tree.item(sel[0], "values")[0]
 
     def _on_search(self):
         if self.handler:
             self.handler.search()
 
     def _on_clear_search(self):
-        self.clear_search()
+        self.entry_search.delete(0, tk.END)
         if self.handler:
             self.handler.refresh()
 
-    def _delegate(self, action):
-        """Forward button click to handler."""
+    def _on_delete(self):
         if self.handler:
-            getattr(self.handler, action)()
+            self.handler.delete()
+
+    # ── Popover: Add / Edit product ──────────────────────────
+    def _open_add(self):
+        if self.handler:
+            self.handler.open_add_popover()
+
+    def _open_edit(self):
+        if self.handler:
+            self.handler.open_edit_popover()
+
+    # ── Popover: Stock-In / Stock-Out ────────────────────────
+    def _open_stock(self, txn_type):
+        if not self._selected_id:
+            from tkinter import messagebox
+            messagebox.showwarning("Selection",
+                                   "Select a product from the table first.")
+            return
+
+        if self.handler:
+            self.handler.open_stock_popover(txn_type)
+
+    # ── Export ───────────────────────────────────────────────
+    def _on_export(self, fmt):
+        if self.handler:
+            self.handler.export(fmt)

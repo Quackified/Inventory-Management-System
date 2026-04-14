@@ -1,68 +1,80 @@
 """
-dashboard_model.py — Database operations for the dashboard summary.
+dashboard_model.py — Database operations for the dashboard screen.
 """
 
 from database import get_connection, close_connection
 from mysql.connector import Error
-from datetime import date
 
 
 def get_summary():
     """
-    Fetch aggregate stats for the dashboard cards.
+    Fetch summary stats for the dashboard.
 
     Returns:
-        dict: {'total_products': int, 'low_stock': int, 'txn_today': int}
+        dict: {total_products, total_stock, low_stock_count, expired_count}
     """
-    stats = {"total_products": 0, "low_stock": 0, "txn_today": 0}
-
     conn = get_connection()
     if not conn:
-        return stats
+        return {"total_products": 0, "total_stock": 0,
+                "low_stock_count": 0, "expired_count": 0}
     try:
-        cur = conn.cursor()
+        cur = conn.cursor(dictionary=True)
 
-        cur.execute("SELECT COUNT(*) FROM products")
-        stats["total_products"] = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) AS total FROM products")
+        total = cur.fetchone()["total"]
 
-        cur.execute("SELECT COUNT(*) FROM products WHERE current_stock < 10")
-        stats["low_stock"] = cur.fetchone()[0]
+        cur.execute("SELECT COALESCE(SUM(current_stock), 0) AS total_stock FROM products")
+        total_stock = cur.fetchone()["total_stock"]
 
+        # Low stock: per-product threshold
         cur.execute(
-            "SELECT COUNT(*) FROM transactions WHERE DATE(transaction_date) = %s",
-            (date.today(),)
+            "SELECT COUNT(*) AS cnt FROM products "
+            "WHERE current_stock < low_stock_threshold"
         )
-        stats["txn_today"] = cur.fetchone()[0]
+        low_stock = cur.fetchone()["cnt"]
+
+        # Expired count
+        cur.execute(
+            "SELECT COUNT(*) AS cnt FROM products "
+            "WHERE expiry_status = 'Expired'"
+        )
+        expired = cur.fetchone()["cnt"]
 
         cur.close()
+        return {
+            "total_products": total,
+            "total_stock": total_stock,
+            "low_stock_count": low_stock,
+            "expired_count": expired,
+        }
     except Error as e:
-        print(f"[DashboardModel] Stats error: {e}")
+        print(f"[DashboardModel] Summary error: {e}")
+        return {"total_products": 0, "total_stock": 0,
+                "low_stock_count": 0, "expired_count": 0}
     finally:
         close_connection(conn)
-
-    return stats
 
 
 def get_recent_transactions(limit=10):
     """
-    Fetch the most recent transactions for the dashboard table.
+    Fetch the most recent transactions with product names.
 
     Returns:
-        list[tuple]: Rows of (id, product_name, type, qty, date, user_id).
+        list[tuple]: Rows of (id, product_name, type, qty, date).
     """
     conn = get_connection()
     if not conn:
         return []
     try:
         cur = conn.cursor()
-        cur.execute("""
+        cur.execute(f"""
             SELECT t.transaction_id, p.name, t.type, t.quantity,
-                   DATE_FORMAT(t.transaction_date, '%%Y-%%m-%%d'), t.user_id
+                   DATE_FORMAT(t.transaction_date, '%Y-%m-%d %H:%i')
             FROM transactions t
             JOIN products p ON t.product_id = p.product_id
             ORDER BY t.transaction_date DESC
-            LIMIT %s
-        """, (limit,))
+            LIMIT {int(limit)}
+        """)
         rows = cur.fetchall()
         cur.close()
         return rows

@@ -31,5 +31,5 @@ class LoginHandler:
             self.controller.on_login_success()
         else:
             messagebox.showerror("Login Failed",
-                                 "Invalid username or password.\n"
-                                 "Hint: admin / password")
+                                 "Invalid username or password.\n")
+ 

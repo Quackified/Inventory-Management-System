@@ -16,5 +16,15 @@ BTN_SUCCESS  = "#27ae60"
 BTN_WARNING  = "#e67e22"
 BTN_DANGER   = "#d9534f"
 
+# ── Row highlight colours (Treeview tags) ────────────────────
+ROW_LOW_STOCK = "#fff3cd"   # warm yellow background
+ROW_EXPIRED   = "#f8d7da"   # soft red background
+ROW_SELECTED  = "#d6eaf8"   # light blue highlight
+
+# ── Popover / dialog colours ─────────────────────────────────
+POPOVER_BG      = "#ffffff"
+POPOVER_BORDER  = "#ccc"
+POPOVER_OVERLAY = "#00000055"  # semi-transparent overlay (unused in Tkinter but noted)
+
 # ── Typography ───────────────────────────────────────────────
 FONT_FAMILY  = "Segoe UI"

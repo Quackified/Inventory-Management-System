@@ -6,26 +6,67 @@ from database import get_connection, close_connection
 from mysql.connector import Error
 
 
-def get_all():
+def get_all(warehouse_id=None, search_term=None, txn_type=None,
+            date_from=None, date_to=None):
     """
-    Fetch all transactions joined with product names.
+    Fetch transactions with optional filters.
+
+    Args:
+        warehouse_id (int, optional): Filter by warehouse.
+        search_term (str, optional): Filter by product name.
+        txn_type (str, optional): 'Stock-In' or 'Stock-Out'.
+        date_from (str, optional): Start date (YYYY-MM-DD).
+        date_to (str, optional): End date (YYYY-MM-DD).
 
     Returns:
-        list[tuple]: Rows of (id, product_name, type, qty, date, remarks, user_id).
+        list[tuple]: Rows of (id, product_name, type, qty, date, remarks,
+                     username, warehouse_name, category_name, batch).
     """
     conn = get_connection()
     if not conn:
         return []
     try:
         cur = conn.cursor()
-        cur.execute("""
-            SELECT t.transaction_id, p.name, t.type, t.quantity,
-                   DATE_FORMAT(t.transaction_date, '%%Y-%%m-%%d %%H:%%i'),
-                   t.remarks, t.user_id
+        query = """
+            SELECT t.transaction_id, p.name AS product, t.type, t.quantity,
+                   DATE_FORMAT(t.transaction_date, %s),
+                   t.remarks,
+                   COALESCE(u.username, t.user_id) AS user,
+                   COALESCE(w.name, '—') AS warehouse,
+                   COALESCE(c.name, '—') AS category,
+                   COALESCE(p.batch_number, '—') AS batch
             FROM transactions t
             JOIN products p ON t.product_id = p.product_id
-            ORDER BY t.transaction_date DESC
-        """)
+            LEFT JOIN users u ON t.user_id = u.user_id
+            LEFT JOIN warehouses w ON t.warehouse_id = w.warehouse_id
+            LEFT JOIN categories c ON p.category_id = c.category_id
+            WHERE 1=1
+        """
+        params = ["%Y-%m-%d %H:%i"]
+
+        if warehouse_id:
+            query += " AND t.warehouse_id = %s"
+            params.append(warehouse_id)
+
+        if search_term:
+            query += " AND p.name LIKE %s"
+            params.append(f"%{search_term}%")
+
+        if txn_type and txn_type != "All":
+            query += " AND t.type = %s"
+            params.append(txn_type)
+
+        if date_from:
+            query += " AND DATE(t.transaction_date) >= %s"
+            params.append(date_from)
+
+        if date_to:
+            query += " AND DATE(t.transaction_date) <= %s"
+            params.append(date_to)
+
+        query += " ORDER BY t.transaction_date DESC LIMIT 500"
+
+        cur.execute(query, tuple(params))
         rows = cur.fetchall()
         cur.close()
         return rows
@@ -36,56 +77,8 @@ def get_all():
         close_connection(conn)
 
 
-def get_products_for_dropdown():
-    """
-    Fetch product list for the transaction form dropdown.
-
-    Returns:
-        list[tuple]: Rows of (product_id, name, current_stock).
-    """
-    conn = get_connection()
-    if not conn:
-        return []
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT product_id, name, current_stock FROM products ORDER BY name"
-        )
-        rows = cur.fetchall()
-        cur.close()
-        return rows
-    except Error as e:
-        print(f"[TransactionModel] Product load error: {e}")
-        return []
-    finally:
-        close_connection(conn)
-
-
-def get_current_stock(product_id):
-    """
-    Get the current stock level of a single product.
-
-    Returns:
-        int or None: Current stock, or None if not found.
-    """
-    conn = get_connection()
-    if not conn:
-        return None
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT current_stock FROM products WHERE product_id = %s",
-                    (product_id,))
-        row = cur.fetchone()
-        cur.close()
-        return row[0] if row else None
-    except Error as e:
-        print(f"[TransactionModel] Stock check error: {e}")
-        return None
-    finally:
-        close_connection(conn)
-
-
-def record(product_id, user_id, txn_type, quantity, remarks):
+def record(product_id, user_id, txn_type, quantity, remarks,
+           warehouse_id=None):
     """
     Record a transaction and update the product stock level.
 
@@ -95,6 +88,7 @@ def record(product_id, user_id, txn_type, quantity, remarks):
         txn_type (str): 'Stock-In' or 'Stock-Out'.
         quantity (int): Number of units.
         remarks (str): Optional notes.
+        warehouse_id (int, optional): Warehouse for this transaction.
 
     Returns:
         tuple: (success: bool, message: str)
@@ -108,9 +102,9 @@ def record(product_id, user_id, txn_type, quantity, remarks):
         # 1) Insert the transaction record
         cur.execute(
             "INSERT INTO transactions "
-            "(product_id, user_id, type, quantity, remarks) "
-            "VALUES (%s, %s, %s, %s, %s)",
-            (product_id, user_id, txn_type, quantity, remarks)
+            "(product_id, user_id, warehouse_id, type, quantity, remarks) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (product_id, user_id, warehouse_id, txn_type, quantity, remarks)
         )
 
         # 2) Update product stock level
