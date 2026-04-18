@@ -1,72 +1,71 @@
 """
-login_screen.py — Login screen UI (no business logic).
+login_screen.py — Login screen using ttkbootstrap widgets.
 """
 
 import tkinter as tk
-from config import BG, CARD_BG, BTN_PRIMARY, FONT_FAMILY
+import ttkbootstrap as ttk
+from ttkbootstrap.constants import *
+from config import (BG, BEIGE, WHITE, DARK_BROWN, OLIVE, GOLD,
+                    TEXT_SECONDARY, TEXT_MUTED,
+                    FONT_FAMILY, FONT_SIZE_LG, FONT_SIZE_MD)
 
 
 class LoginScreen(tk.Frame):
-    """Login card with username/password fields and a Login button."""
+    """Login card with username/password fields and a Sign In button."""
 
     def __init__(self, parent, controller):
-        super().__init__(parent, bg=BG)
+        super().__init__(parent, bg=BEIGE)
         self.controller = controller
-
-        # ── Login handler reference (set by App after construction) ──
         self.handler = None
 
-        # ── Centred card ─────────────────────────────────────
-        card = tk.Frame(self, bg=CARD_BG, bd=0, relief="flat",
-                        highlightbackground="#ddd", highlightthickness=1)
-        card.place(relx=0.5, rely=0.5, anchor="center", width=380, height=360)
+        # Centred card
+        card = tk.Frame(self, bg=WHITE, bd=0, relief="flat",
+                        highlightbackground="#D0C8BE", highlightthickness=1)
+        card.place(relx=0.5, rely=0.5, anchor="center",
+                   width=400, height=420)
 
-        tk.Label(card, text="Inventory System",
-                 font=(FONT_FAMILY, 18, "bold"),
-                 bg=CARD_BG, fg="#333").pack(pady=(30, 5))
-        tk.Label(card, text="Sign in to continue",
-                 font=(FONT_FAMILY, 10),
-                 bg=CARD_BG, fg="#888").pack(pady=(0, 20))
+        # Gold accent
+        tk.Frame(card, bg=GOLD, height=4).pack(fill="x")
+
+        # Branding
+        tk.Label(card, text="IMBAK",
+                 font=(FONT_FAMILY, 24, "bold"),
+                 bg=WHITE, fg=OLIVE).pack(pady=(30, 2))
+        tk.Label(card, text="Inventory Monitoring and\nBasic Asset Keeper System",
+                 font=(FONT_FAMILY, 9),
+                 bg=WHITE, fg=TEXT_MUTED, justify="center").pack(pady=(0, 24))
 
         # Username
         tk.Label(card, text="Username", font=(FONT_FAMILY, 10),
-                 bg=CARD_BG, fg="#555", anchor="w").pack(padx=40, fill="x")
-        self.entry_username = tk.Entry(card, font=(FONT_FAMILY, 11),
-                                       relief="solid", bd=1)
-        self.entry_username.pack(padx=40, fill="x", ipady=4)
+                 bg=WHITE, fg=TEXT_SECONDARY, anchor="w").pack(padx=44, fill="x")
+        self.entry_username = ttk.Entry(card, font=(FONT_FAMILY, 11))
+        self.entry_username.pack(padx=44, fill="x", ipady=4)
 
         # Password
         tk.Label(card, text="Password", font=(FONT_FAMILY, 10),
-                 bg=CARD_BG, fg="#555", anchor="w").pack(padx=40, fill="x",
-                                                          pady=(12, 0))
-        self.entry_password = tk.Entry(card, font=(FONT_FAMILY, 11),
-                                       show="\u2022", relief="solid", bd=1)
-        self.entry_password.pack(padx=40, fill="x", ipady=4)
+                 bg=WHITE, fg=TEXT_SECONDARY, anchor="w"
+                 ).pack(padx=44, fill="x", pady=(14, 0))
+        self.entry_password = ttk.Entry(card, font=(FONT_FAMILY, 11), show="\u2022")
+        self.entry_password.pack(padx=44, fill="x", ipady=4)
 
-        # Login button
-        tk.Button(
-            card, text="Login", font=(FONT_FAMILY, 11, "bold"),
-            bg=BTN_PRIMARY, fg="white", activebackground="#3b6baa",
-            activeforeground="white", cursor="hand2",
-            relief="flat", bd=0, command=self._on_login_click
-        ).pack(padx=40, fill="x", ipady=6, pady=(24, 0))
+        # Sign In button
+        self._btn_login = ttk.Button(
+            card, text="Sign In", bootstyle="success",
+            command=self._on_login_click,
+        )
+        self._btn_login.pack(padx=44, fill="x", ipady=6, pady=(28, 0))
 
         # Enter key shortcut
         self.entry_password.bind("<Return>", lambda e: self._on_login_click())
 
-    # ── View interface methods ───────────────────────────────
     def get_credentials(self):
-        """Return (username, password) from the form fields."""
         return (self.entry_username.get().strip(),
                 self.entry_password.get().strip())
 
     def clear_fields(self):
-        """Clear both input fields."""
         self.entry_username.delete(0, tk.END)
         self.entry_password.delete(0, tk.END)
 
-    # ── Internal ─────────────────────────────────────────────
     def _on_login_click(self):
-        """Delegate the login action to the handler."""
         if self.handler:
             self.handler.handle_login()

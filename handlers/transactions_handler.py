@@ -1,72 +1,95 @@
 """
-transactions_handler.py — Business logic for inventory transactions.
+transactions_handler.py — Business logic for transaction log viewing and export.
 """
 
-from tkinter import messagebox
-from models import transaction_model
+from tkinter import filedialog
+from gui.dialogs import show_success, show_error
+from models import transaction_model, warehouse_model, export_model
 
 
 class TransactionsHandler:
-    """Validates transaction input, enforces stock guard, records via model."""
+    """Loads and filters transaction logs for the transactions screen."""
 
     def __init__(self, view, controller):
-        self.view = view              # TransactionsScreen instance
-        self.controller = controller  # App instance (for current_user)
+        self.view = view
+        self.controller = controller
 
     def refresh(self):
-        """Reload the product dropdown and transaction history."""
-        products = transaction_model.get_products_for_dropdown()
-        self.view.populate_products(products)
+        """Load warehouses for the filter dropdown and all transactions."""
+        wh_rows = warehouse_model.get_all_active()
+        self.view.populate_warehouses(wh_rows)
 
-        transactions = transaction_model.get_all()
+        self.apply_filters()
+
+    def apply_filters(self, page=None, page_size=None):
+        """Get filter values from the view and reload filtered data."""
+        filters = self.view.get_filters()
+
+        if page is None:
+            page, page_size = self.view.pager.get_state()
+
+        # Get total count for pagination
+        total = transaction_model.get_total_count(
+            warehouse_id=filters["warehouse_id"],
+            search_term=filters["search_term"],
+            txn_type=filters["txn_type"],
+            date_from=filters["date_from"],
+            date_to=filters["date_to"],
+        )
+        self.view.pager.set_total(total)
+
+        # Get page of data
+        transactions = transaction_model.get_all(
+            warehouse_id=filters["warehouse_id"],
+            search_term=filters["search_term"],
+            txn_type=filters["txn_type"],
+            date_from=filters["date_from"],
+            date_to=filters["date_to"],
+            page=page,
+            page_size=page_size,
+        )
         self.view.populate_table(transactions)
 
-    def record(self):
-        """Validate input, check stock, and record the transaction."""
-        data = self.view.get_form_data()
+    def export(self, fmt):
+        """Export current filtered transaction logs to CSV or Excel."""
+        root = self.view.winfo_toplevel()
+        filters = self.view.get_filters()
 
-        # --- Input validation ---
-        if not data["product_id"]:
-            messagebox.showwarning("Validation", "Please select a product.")
-            return
+        if fmt == "csv":
+            filetypes = [("CSV files", "*.csv")]
+            default_ext = ".csv"
+        else:
+            filetypes = [("Excel files", "*.xlsx")]
+            default_ext = ".xlsx"
 
-        qty_str = data["quantity"]
-        if not qty_str.isdigit() or int(qty_str) <= 0:
-            messagebox.showwarning("Validation",
-                                   "Quantity must be a positive integer.")
-            return
-
-        product_id = data["product_id"]
-        txn_type = data["txn_type"]
-        quantity = int(qty_str)
-        remarks = data["remarks"]
-
-        # Get user_id from current session
-        user = self.controller.current_user
-        user_id = user["user_id"] if user else 1
-
-        # --- Stock guard for Stock-Out ---
-        if txn_type == "Stock-Out":
-            current_stock = transaction_model.get_current_stock(product_id)
-            if current_stock is None:
-                messagebox.showerror("Error", "Product not found.")
-                return
-            if quantity > current_stock:
-                messagebox.showwarning(
-                    "Insufficient Stock",
-                    f"Only {current_stock} unit(s) available. "
-                    f"Cannot stock-out {quantity}."
-                )
-                return
-
-        # --- Record via model ---
-        success, msg = transaction_model.record(
-            product_id, user_id, txn_type, quantity, remarks
+        filepath = filedialog.asksaveasfilename(
+            title="Export Transactions",
+            defaultextension=default_ext,
+            filetypes=filetypes
         )
+        if not filepath:
+            return
+
+        if fmt == "csv":
+            success, msg = export_model.export_transactions_csv(
+                filepath,
+                warehouse_id=filters["warehouse_id"],
+                search_term=filters["search_term"],
+                txn_type=filters["txn_type"],
+                date_from=filters["date_from"],
+                date_to=filters["date_to"],
+            )
+        else:
+            success, msg = export_model.export_transactions_xlsx(
+                filepath,
+                warehouse_id=filters["warehouse_id"],
+                search_term=filters["search_term"],
+                txn_type=filters["txn_type"],
+                date_from=filters["date_from"],
+                date_to=filters["date_to"],
+            )
 
         if success:
-            messagebox.showinfo("Success", msg)
-            self.view.clear_form()
-            self.refresh()
+            show_success(root, "Export Complete", msg)
         else:
-            messagebox.showerror("DB Error", msg)
+            show_error(root, "Export Error", msg)

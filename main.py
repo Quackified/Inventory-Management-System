@@ -7,7 +7,7 @@ Architecture: MVP (Model-View-Presenter)
     handlers/   — Business logic (connects GUI to Models)
 """
 
-from gui.app_shell import App
+from gui.root_window import App
 
 
 if __name__ == "__main__":
