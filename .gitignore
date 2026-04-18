@@ -2,3 +2,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 context.md
+reference_images/
+task.md
+task2.md
+task3.md
