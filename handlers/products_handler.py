@@ -2,7 +2,8 @@
 products_handler.py — Business logic for product CRUD and stock transactions.
 """
 
-from tkinter import messagebox, filedialog
+from tkinter import filedialog
+from gui.dialogs import show_success, show_warning, show_error, show_confirm
 from models import product_model, transaction_model, warehouse_model, category_model
 from models import export_model
 from gui.popover import Popover
@@ -15,24 +16,35 @@ class ProductsHandler:
         self.view = view
         self.controller = controller
 
-    def refresh(self):
-        rows = product_model.get_all()
+    def refresh(self, page=None, page_size=None):
+        """Load products with optional pagination."""
+        term = self.view.get_search_term() or None
+
+        if page is None:
+            page, page_size = self.view.pager.get_state()
+
+        total = product_model.get_total_count(search_term=term)
+        self.view.pager.set_total(total)
+
+        rows = product_model.get_page(page=page, page_size=page_size,
+                                       search_term=term)
         self.view.populate_table(rows)
 
     def search(self):
-        term = self.view.get_search_term()
-        rows = product_model.get_all(search_term=term if term else None)
-        self.view.populate_table(rows)
+        self.view.pager.reset()
+        self.refresh()
 
     def delete(self):
         pid = self.view.get_selected_id()
+        root = self.view.winfo_toplevel()
+
         if not pid:
-            messagebox.showwarning("Selection",
-                                   "Select a product from the table first.")
+            show_warning(root, "Selection",
+                         "Select a product from the table first.")
             return
 
-        confirm = messagebox.askyesno(
-            "Confirm Delete",
+        confirm = show_confirm(
+            root, "Confirm Delete",
             f"Are you sure you want to delete product #{pid}?"
         )
         if not confirm:
@@ -40,15 +52,15 @@ class ProductsHandler:
 
         success, msg = product_model.delete(pid)
         if success:
-            messagebox.showinfo("Success", msg)
+            show_success(root, "Deleted", msg)
             self.refresh()
         else:
-            messagebox.showerror("DB Error", msg)
+            show_error(root, "Database Error", msg)
 
     # ── Popover: Add ─────────────────────────────────────────
     def open_add_popover(self):
         root = self.view.winfo_toplevel()
-        pop = Popover(root, title="Add Product", width=500, height=440)
+        pop = Popover(root, title="Add Product", width=520, height=540)
 
         e_name = pop.add_field("Name:")
         e_desc = pop.add_field("Description:")
@@ -80,11 +92,11 @@ class ProductsHandler:
 
             success, msg = product_model.add(**data)
             if success:
-                messagebox.showinfo("Success", msg)
+                show_success(root, "Product Added", msg)
                 pop.close()
                 self.refresh()
             else:
-                messagebox.showerror("DB Error", msg)
+                show_error(root, "Database Error", msg)
 
         pop.add_button("Save", command=on_save, style="success")
         pop.add_button("Cancel", command=pop.close, style="secondary")
@@ -92,18 +104,19 @@ class ProductsHandler:
     # ── Popover: Edit ────────────────────────────────────────
     def open_edit_popover(self):
         pid = self.view.get_selected_id()
+        root = self.view.winfo_toplevel()
+
         if not pid:
-            messagebox.showwarning("Selection",
-                                   "Select a product from the table first.")
+            show_warning(root, "Selection",
+                         "Select a product from the table first.")
             return
 
         product = product_model.get_by_id(pid)
         if not product:
-            messagebox.showerror("Error", "Product not found.")
+            show_error(root, "Error", "Product not found.")
             return
 
-        root = self.view.winfo_toplevel()
-        pop = Popover(root, title=f"Edit Product #{pid}", width=500, height=440)
+        pop = Popover(root, title=f"Edit Product #{pid}", width=520, height=540)
 
         e_name = pop.add_field("Name:", default=product["name"])
         e_desc = pop.add_field("Description:",
@@ -154,11 +167,11 @@ class ProductsHandler:
 
             success, msg = product_model.update(pid, **data)
             if success:
-                messagebox.showinfo("Success", msg)
+                show_success(root, "Product Updated", msg)
                 pop.close()
                 self.refresh()
             else:
-                messagebox.showerror("DB Error", msg)
+                show_error(root, "Database Error", msg)
 
         pop.add_button("Save", command=on_save, style="success")
         pop.add_button("Cancel", command=pop.close, style="secondary")
@@ -169,48 +182,43 @@ class ProductsHandler:
         if not pid:
             return
 
-        current_stock = product_model.get_current_stock(pid)
         root = self.view.winfo_toplevel()
+        current_stock = product_model.get_current_stock(pid)
         pop = Popover(root, title=f"{txn_type} — Product #{pid}",
-                      width=420, height=280)
+                      width=440, height=300)
 
         e_qty = pop.add_field("Quantity:")
 
-        # Warehouse dropdown
         wh_rows = warehouse_model.get_all_active()
         wh_names = [f"{r[0]}:{r[1]}" for r in wh_rows]
         cmb_wh = pop.add_dropdown("Warehouse:", values=["(None)"] + wh_names)
 
         e_remarks = pop.add_field("Remarks:")
 
-        # Show current stock info
         import tkinter as tk
+        from config import FONT_FAMILY, WHITE, TEXT_MUTED
         tk.Label(pop.body, text=f"Current stock: {current_stock}",
-                 font=("Segoe UI", 9), fg="#888",
-                 bg="white").pack(anchor="w", pady=(4, 0))
+                 font=(FONT_FAMILY, 9), fg=TEXT_MUTED,
+                 bg=WHITE).pack(anchor="w", pady=(6, 0))
 
         def on_record():
             qty_str = e_qty.get().strip()
             if not qty_str.isdigit() or int(qty_str) <= 0:
-                messagebox.showwarning("Validation",
-                                       "Quantity must be a positive integer.")
+                show_warning(root, "Validation",
+                             "Quantity must be a positive integer.")
                 return
 
             quantity = int(qty_str)
 
-            # Stock-Out guard
             if txn_type == "Stock-Out":
                 if current_stock is None:
-                    messagebox.showerror("Error", "Product not found.")
+                    show_error(root, "Error", "Product not found.")
                     return
                 if quantity > current_stock:
-                    messagebox.showwarning(
-                        "Insufficient Stock",
-                        f"Only {current_stock} unit(s) available."
-                    )
+                    show_warning(root, "Insufficient Stock",
+                                 f"Only {current_stock} unit(s) available.")
                     return
 
-            # Resolve warehouse_id
             wh_val = cmb_wh.get()
             wh_id = None
             if wh_val and wh_val != "(None)":
@@ -224,11 +232,11 @@ class ProductsHandler:
                 pid, user_id, txn_type, quantity, remarks, wh_id
             )
             if success:
-                messagebox.showinfo("Success", msg)
+                show_success(root, "Transaction Recorded", msg)
                 pop.close()
                 self.refresh()
             else:
-                messagebox.showerror("DB Error", msg)
+                show_error(root, "Database Error", msg)
 
         pop.add_button("Record", command=on_record, style="success")
         pop.add_button("Cancel", command=pop.close, style="secondary")
@@ -238,21 +246,23 @@ class ProductsHandler:
                                cmb_wh, cmb_cat, e_threshold,
                                e_expiry, e_mfg, e_batch):
         """Validate and return dict of product fields, or None on failure."""
+        root = self.view.winfo_toplevel()
+
         name = e_name.get().strip()
         if not name:
-            messagebox.showwarning("Validation", "Product name is required.")
+            show_warning(root, "Validation", "Product name is required.")
             return None
 
         stock_str = e_stock.get().strip()
         if not stock_str.isdigit():
-            messagebox.showwarning("Validation",
-                                   "Stock must be a non-negative integer.")
+            show_warning(root, "Validation",
+                         "Stock must be a non-negative integer.")
             return None
 
         threshold_str = e_threshold.get().strip()
         if not threshold_str.isdigit():
-            messagebox.showwarning("Validation",
-                                   "Low stock threshold must be a number.")
+            show_warning(root, "Validation",
+                         "Low stock threshold must be a number.")
             return None
 
         # Resolve warehouse_id
@@ -273,7 +283,7 @@ class ProductsHandler:
             except ValueError:
                 pass
 
-        # Dates — allow empty or placeholder
+        # Dates
         expiry = e_expiry.get().strip()
         if expiry in ("", "YYYY-MM-DD"):
             expiry = None
@@ -299,7 +309,8 @@ class ProductsHandler:
 
     # ── Export ───────────────────────────────────────────────
     def export(self, fmt):
-        """Export products to CSV or Excel."""
+        root = self.view.winfo_toplevel()
+
         if fmt == "csv":
             filetypes = [("CSV files", "*.csv")]
             default_ext = ".csv"
@@ -321,6 +332,6 @@ class ProductsHandler:
             success, msg = export_model.export_products_xlsx(filepath)
 
         if success:
-            messagebox.showinfo("Export Complete", msg)
+            show_success(root, "Export Complete", msg)
         else:
-            messagebox.showerror("Export Error", msg)
+            show_error(root, "Export Error", msg)

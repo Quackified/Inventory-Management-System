@@ -1,5 +1,7 @@
 """
 product_model.py — Database operations for product management.
+Uses soft delete (is_deleted flag) to preserve referential integrity
+with transaction logs.
 """
 
 from database import get_connection, close_connection
@@ -8,7 +10,7 @@ from mysql.connector import Error
 
 def get_all(search_term=None):
     """
-    Fetch all products with warehouse and category names.
+    Fetch all active (non-deleted) products with warehouse and category names.
 
     Args:
         search_term (str, optional): Filter by product name.
@@ -34,9 +36,10 @@ def get_all(search_term=None):
             FROM products p
             LEFT JOIN warehouses w ON p.warehouse_id = w.warehouse_id
             LEFT JOIN categories c ON p.category_id = c.category_id
+            WHERE p.is_deleted = 0
         """
         if search_term:
-            base += " WHERE p.name LIKE %s"
+            base += " AND p.name LIKE %s"
             base += " ORDER BY p.product_id"
             cur.execute(base, (f"%{search_term}%",))
         else:
@@ -49,6 +52,86 @@ def get_all(search_term=None):
     except Error as e:
         print(f"[ProductModel] Load error: {e}")
         return []
+    finally:
+        close_connection(conn)
+
+
+def get_page(page=1, page_size=10, search_term=None):
+    """
+    Fetch a single page of active products (for paginated display).
+
+    Args:
+        page (int): 1-based page number.
+        page_size (int): Rows per page.
+        search_term (str, optional): Filter by product name.
+
+    Returns:
+        list[tuple]: Same columns as get_all().
+    """
+    conn = get_connection()
+    if not conn:
+        return []
+    try:
+        cur = conn.cursor()
+        base = """
+            SELECT p.product_id, p.name, p.description, p.current_stock,
+                   p.unit,
+                   COALESCE(w.name, '—') AS warehouse,
+                   COALESCE(c.name, '—') AS category,
+                   p.low_stock_threshold,
+                   p.expiry_date, p.expiry_status,
+                   p.manufactured_date, p.batch_number
+            FROM products p
+            LEFT JOIN warehouses w ON p.warehouse_id = w.warehouse_id
+            LEFT JOIN categories c ON p.category_id = c.category_id
+            WHERE p.is_deleted = 0
+        """
+        params = []
+        if search_term:
+            base += " AND p.name LIKE %s"
+            params.append(f"%{search_term}%")
+
+        base += " ORDER BY p.product_id LIMIT %s OFFSET %s"
+        params.extend([page_size, (page - 1) * page_size])
+
+        cur.execute(base, tuple(params))
+        rows = cur.fetchall()
+        cur.close()
+        return rows
+    except Error as e:
+        print(f"[ProductModel] Page load error: {e}")
+        return []
+    finally:
+        close_connection(conn)
+
+
+def get_total_count(search_term=None):
+    """
+    Count total active products (for pagination).
+
+    Args:
+        search_term (str, optional): Filter by product name.
+
+    Returns:
+        int: Total row count.
+    """
+    conn = get_connection()
+    if not conn:
+        return 0
+    try:
+        cur = conn.cursor()
+        query = "SELECT COUNT(*) FROM products WHERE is_deleted = 0"
+        params = []
+        if search_term:
+            query += " AND name LIKE %s"
+            params.append(f"%{search_term}%")
+        cur.execute(query, tuple(params))
+        count = cur.fetchone()[0]
+        cur.close()
+        return count
+    except Error as e:
+        print(f"[ProductModel] Count error: {e}")
+        return 0
     finally:
         close_connection(conn)
 
@@ -142,7 +225,8 @@ def update(product_id, name, description, stock, unit,
 
 def delete(product_id):
     """
-    Delete a product by ID.
+    Soft-delete a product by setting is_deleted = 1.
+    The row is preserved for transaction log integrity.
 
     Returns:
         tuple: (success: bool, message: str)
@@ -152,7 +236,7 @@ def delete(product_id):
         return False, "Could not connect to the database."
     try:
         cur = conn.cursor()
-        cur.execute("DELETE FROM products WHERE product_id=%s",
+        cur.execute("UPDATE products SET is_deleted = 1 WHERE product_id = %s",
                     (product_id,))
         conn.commit()
         cur.close()
@@ -166,7 +250,7 @@ def delete(product_id):
 def check_expired():
     """
     Auto-set expiry_status='Expired' for products whose expiry_date <= today.
-    Called on app startup.
+    Called on app startup. Only checks active (non-deleted) products.
     """
     conn = get_connection()
     if not conn:
@@ -177,7 +261,8 @@ def check_expired():
             "UPDATE products SET expiry_status='Expired' "
             "WHERE expiry_date IS NOT NULL "
             "AND expiry_date <= CURDATE() "
-            "AND expiry_status = 'Active'"
+            "AND expiry_status = 'Active' "
+            "AND is_deleted = 0"
         )
         affected = cur.rowcount
         conn.commit()

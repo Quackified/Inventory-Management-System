@@ -1,15 +1,24 @@
 """
-transactions_screen.py — Transaction log viewer with filters and date picker.
+transactions_screen.py — Transaction log viewer using ttkbootstrap.
+Date range: single ttkbootstrap DateEntry widget (inline calendar icon, like the reference).
+Same Products-style: toolbar card + table + pagination.
 """
 
 import tkinter as tk
-from tkinter import ttk
+import ttkbootstrap as ttk
+from ttkbootstrap.constants import *
 from datetime import date, timedelta
-from config import BG, CARD_BG, BTN_PRIMARY, FONT_FAMILY
+from config import (BG, BEIGE, WHITE, DARK_BROWN, OLIVE, GOLD, AMBER,
+                    TEXT_PRIMARY, TEXT_SECONDARY, TEXT_MUTED,
+                    BORDER_LIGHT, INPUT_BORDER,
+                    ROW_EVEN, ROW_ODD, STATUS_ACTIVE, STATUS_EXPIRED,
+                    FONT_FAMILY, ICON_FONT, PAD_SM, PAD_MD, PAD_LG, PAD_XL)
+from gui.icons import get_icon
+from gui.pagination import PaginationBar
 
 
 class TransactionsScreen(tk.Frame):
-    """Read-only transaction log viewer with date picker, filters, and export."""
+    """Transaction log — Products-style with inline DateEntry widgets."""
 
     def __init__(self, parent, controller):
         super().__init__(parent, bg=BG)
@@ -18,112 +27,99 @@ class TransactionsScreen(tk.Frame):
 
         # ── Header ───────────────────────────────────────────
         header = tk.Frame(self, bg=BG)
-        header.pack(fill="x", padx=24, pady=(20, 10))
+        header.pack(fill="x", padx=PAD_XL, pady=(PAD_LG, PAD_SM))
 
         tk.Label(header, text="Transaction Logs",
-                 font=(FONT_FAMILY, 18, "bold"),
-                 bg=BG, fg="#2c3e50").pack(side="left")
+                 font=(FONT_FAMILY, 20, "bold"),
+                 bg=BG, fg=DARK_BROWN).pack(side="left")
 
-        # ── Filter toolbar ───────────────────────────────────
-        filters = tk.Frame(self, bg=CARD_BG, bd=0,
-                           highlightbackground="#ddd", highlightthickness=1)
-        filters.pack(fill="x", padx=24, pady=(0, 8))
+        # ── Toolbar card ─────────────────────────────────────
+        filter_card = tk.Frame(self, bg=WHITE, bd=0,
+                               highlightbackground=BORDER_LIGHT,
+                               highlightthickness=1)
+        filter_card.pack(fill="x", padx=PAD_XL, pady=(0, PAD_SM))
 
-        # Row 1 — Date range + quick picks
-        r1 = tk.Frame(filters, bg=CARD_BG)
-        r1.pack(fill="x", padx=12, pady=(10, 4))
+        toolbar = tk.Frame(filter_card, bg=WHITE, padx=16, pady=10)
+        toolbar.pack(fill="x")
 
-        tk.Label(r1, text="From:", font=(FONT_FAMILY, 10),
-                 bg=CARD_BG, fg="#555").pack(side="left")
-        self.entry_date_from = tk.Entry(r1, font=(FONT_FAMILY, 10),
-                                         width=12, relief="solid", bd=1)
-        self.entry_date_from.pack(side="left", padx=(4, 10))
+        # Left side: Date entries (inline with calendar icon) + dropdowns
+        left = tk.Frame(toolbar, bg=WHITE)
+        left.pack(side="left")
 
-        tk.Label(r1, text="To:", font=(FONT_FAMILY, 10),
-                 bg=CARD_BG, fg="#555").pack(side="left")
-        self.entry_date_to = tk.Entry(r1, font=(FONT_FAMILY, 10),
-                                       width=12, relief="solid", bd=1)
-        self.entry_date_to.pack(side="left", padx=(4, 14))
+        # From DateEntry (ttkbootstrap DateEntry — inline calendar selector)
+        tk.Label(left, text="From:", font=(FONT_FAMILY, 10),
+                 bg=WHITE, fg=TEXT_SECONDARY).pack(side="left")
+        self.date_from = ttk.DateEntry(left, dateformat="%Y-%m-%d",
+                                       width=12)
+        self.date_from.pack(side="left", padx=(4, 12))
 
-        # Quick date buttons
-        quick_style = dict(font=(FONT_FAMILY, 8), bg="#ecf0f1", fg="#2c3e50",
-                           relief="flat", cursor="hand2", bd=0, padx=6)
+        # To DateEntry
+        tk.Label(left, text="To:", font=(FONT_FAMILY, 10),
+                 bg=WHITE, fg=TEXT_SECONDARY).pack(side="left")
+        self.date_to = ttk.DateEntry(left, dateformat="%Y-%m-%d",
+                                     width=12)
+        self.date_to.pack(side="left", padx=(4, 12))
 
-        tk.Button(r1, text="Today",
-                  command=self._set_today, **quick_style
-                  ).pack(side="left", ipady=2, padx=2)
-        tk.Button(r1, text="Yesterday",
-                  command=self._set_yesterday, **quick_style
-                  ).pack(side="left", ipady=2, padx=2)
-        tk.Button(r1, text="This Week",
-                  command=self._set_this_week, **quick_style
-                  ).pack(side="left", ipady=2, padx=2)
-        tk.Button(r1, text="This Month",
-                  command=self._set_this_month, **quick_style
-                  ).pack(side="left", ipady=2, padx=2)
-        tk.Button(r1, text="All Time",
-                  command=self._set_all_time, **quick_style
-                  ).pack(side="left", ipady=2, padx=2)
+        # Warehouse dropdown
+        tk.Label(left, text="Warehouse:", font=(FONT_FAMILY, 10),
+                 bg=WHITE, fg=TEXT_SECONDARY).pack(side="left", padx=(4, 0))
+        self.cmb_warehouse = ttk.Combobox(left, font=(FONT_FAMILY, 10),
+                                          width=14, state="readonly")
+        self.cmb_warehouse.pack(side="left", padx=(4, 12))
 
-        # Row 2 — Warehouse + Type + Search + Apply
-        r2 = tk.Frame(filters, bg=CARD_BG)
-        r2.pack(fill="x", padx=12, pady=(4, 10))
-
-        tk.Label(r2, text="Warehouse:", font=(FONT_FAMILY, 10),
-                 bg=CARD_BG, fg="#555").pack(side="left")
-        self.cmb_warehouse = ttk.Combobox(r2, font=(FONT_FAMILY, 10),
-                                           width=16, state="readonly")
-        self.cmb_warehouse.pack(side="left", padx=(4, 10))
-
-        tk.Label(r2, text="Type:", font=(FONT_FAMILY, 10),
-                 bg=CARD_BG, fg="#555").pack(side="left")
-        self.cmb_type = ttk.Combobox(r2, font=(FONT_FAMILY, 10),
-                                      width=10, state="readonly",
-                                      values=["All", "Stock-In", "Stock-Out"])
+        # Type dropdown
+        tk.Label(left, text="Type:", font=(FONT_FAMILY, 10),
+                 bg=WHITE, fg=TEXT_SECONDARY).pack(side="left")
+        self.cmb_type = ttk.Combobox(left, font=(FONT_FAMILY, 10),
+                                     width=10, state="readonly",
+                                     values=["All", "Stock-In", "Stock-Out"])
         self.cmb_type.set("All")
-        self.cmb_type.pack(side="left", padx=(4, 10))
+        self.cmb_type.pack(side="left", padx=(4, 0))
 
-        tk.Label(r2, text="Search:", font=(FONT_FAMILY, 10),
-                 bg=CARD_BG, fg="#555").pack(side="left")
-        self.entry_search = tk.Entry(r2, font=(FONT_FAMILY, 10),
-                                      width=18, relief="solid", bd=1)
-        self.entry_search.pack(side="left", padx=(4, 10))
+        # Clear button sits next to the Type dropdown.
+        ttk.Button(left, text="Clear", bootstyle="secondary-outline",
+               command=self._on_clear_filters
+               ).pack(side="left", padx=(6, 12))
 
-        tk.Button(r2, text="Apply Filters",
-                  font=(FONT_FAMILY, 9, "bold"),
-                  bg=BTN_PRIMARY, fg="white",
-                  activebackground="#3b6baa",
-                  relief="flat", cursor="hand2",
-                  command=self._on_apply_filters
-                  ).pack(side="left", ipady=3, padx=(4, 4))
+        # Right side: buttons
+        right = tk.Frame(toolbar, bg=WHITE)
+        right.pack(side="right")
 
-        tk.Button(r2, text="Clear",
-                  font=(FONT_FAMILY, 9),
-                  bg="#95a5a6", fg="white",
-                  relief="flat", cursor="hand2",
-                  command=self._on_clear_filters
-                  ).pack(side="left", ipady=3)
+        # Export (plain dropdown — tight labels)
+        export_mb = ttk.Menubutton(right, text="Export",
+                                   bootstyle="secondary-outline")
+        export_menu = tk.Menu(export_mb, tearoff=0,
+                              font=(FONT_FAMILY, 10), bg=WHITE,
+                              fg=DARK_BROWN, activebackground=BEIGE,
+                              borderwidth=1, relief="solid")
+        export_menu.add_command(label="CSV", command=lambda: self._on_export("csv"))
+        export_menu.add_command(label="Excel", command=lambda: self._on_export("xlsx"))
+        export_mb["menu"] = export_menu
+        export_mb.pack(side="right", padx=(6, 0))
 
-        # Export buttons
-        tk.Frame(r2, bg=CARD_BG, width=10).pack(side="left")
+        # ── Date preset row ──────────────────────────────────
+        preset_row = tk.Frame(filter_card, bg=WHITE, padx=16)
+        preset_row.pack(fill="x", pady=(0, 8))
 
-        tk.Button(r2, text="Export CSV",
-                  font=(FONT_FAMILY, 8, "bold"),
-                  bg="#7f8c8d", fg="white",
-                  relief="flat", cursor="hand2",
-                  command=lambda: self._on_export("csv")
-                  ).pack(side="left", ipady=2, padx=2)
+        tk.Label(preset_row, text="Quick:", font=(FONT_FAMILY, 9),
+                 bg=WHITE, fg=TEXT_MUTED).pack(side="left", padx=(0, 6))
 
-        tk.Button(r2, text="Export Excel",
-                  font=(FONT_FAMILY, 8, "bold"),
-                  bg="#2c3e50", fg="white",
-                  relief="flat", cursor="hand2",
-                  command=lambda: self._on_export("xlsx")
-                  ).pack(side="left", ipady=2, padx=2)
+        for label, cmd in [
+            ("Today",      self._preset_today),
+            ("This Week",  self._preset_week),
+            ("This Month", self._preset_month),
+            ("All Time",   self._preset_all_time),
+        ]:
+            ttk.Button(preset_row, text=label, bootstyle="secondary-outline",
+                       command=cmd
+                       ).pack(side="left", padx=(0, 4))
+
+        self.cmb_warehouse.bind("<<ComboboxSelected>>", self._on_filter_change)
+        self.cmb_type.bind("<<ComboboxSelected>>", self._on_filter_change)
 
         # ── Treeview ─────────────────────────────────────────
-        tree_frame = tk.Frame(self, bg=BG)
-        tree_frame.pack(fill="both", expand=True, padx=24, pady=(0, 20))
+        tree_frame = tk.Frame(self, bg=WHITE, bd=0, highlightbackground=BORDER_LIGHT, highlightthickness=1)
+        tree_frame.pack(fill="both", expand=True, padx=PAD_XL, pady=(0, PAD_SM))
 
         cols = ("ID", "Product", "Type", "Qty", "Date",
                 "Warehouse", "Category", "Batch", "Remarks", "User")
@@ -131,12 +127,18 @@ class TransactionsScreen(tk.Frame):
                                  show="headings", height=14,
                                  selectmode="browse")
 
-        col_widths = {"ID": 40, "Product": 130, "Type": 75, "Qty": 45,
-                      "Date": 115, "Warehouse": 100, "Category": 90,
+        col_widths = {"ID": 44, "Product": 140, "Type": 80, "Qty": 50,
+                      "Date": 120, "Warehouse": 100, "Category": 90,
                       "Batch": 80, "Remarks": 130, "User": 70}
         for c in cols:
             self.tree.heading(c, text=c)
-            self.tree.column(c, width=col_widths.get(c, 80), anchor="center")
+            self.tree.column(c, width=col_widths.get(c, 80),
+                             anchor="center", stretch=True)
+
+        self.tree.tag_configure("stock_in",  foreground=STATUS_ACTIVE)
+        self.tree.tag_configure("stock_out", foreground=STATUS_EXPIRED)
+        self.tree.tag_configure("evenrow",   background=ROW_EVEN)
+        self.tree.tag_configure("oddrow",    background=ROW_ODD)
 
         scroll_y = ttk.Scrollbar(tree_frame, orient="vertical",
                                  command=self.tree.yview)
@@ -144,12 +146,23 @@ class TransactionsScreen(tk.Frame):
         self.tree.pack(side="left", fill="both", expand=True)
         scroll_y.pack(side="right", fill="y")
 
-        # Warehouse map for filter dropdown
         self._warehouse_map = {}
 
-    # ── View interface methods ───────────────────────────────
+        # ── Pagination (bottom) ──────────────────────────────
+        pager_frame = tk.Frame(self, bg=WHITE, bd=0,
+                               highlightbackground=BORDER_LIGHT,
+                               highlightthickness=1)
+        pager_frame.pack(fill="x", padx=PAD_XL, pady=(0, PAD_LG))
+
+        self.pager = PaginationBar(pager_frame,
+                                   on_page_change=self._on_page_change,
+                                   bg=WHITE)
+        self.pager.pack(fill="x", padx=12, pady=6)
+        self.pager.cmb_size.set("50")
+        self.pager._page_size = 50
+
+    # ── View interface ───────────────────────────────────────
     def populate_warehouses(self, wh_rows):
-        """Fill warehouse filter dropdown. wh_rows: list of (id, name)."""
         self._warehouse_map.clear()
         display = ["All Warehouses"]
         for wid, name in wh_rows:
@@ -159,58 +172,72 @@ class TransactionsScreen(tk.Frame):
         self.cmb_warehouse.set("All Warehouses")
 
     def populate_table(self, rows):
-        """Clear and repopulate the log table."""
         for item in self.tree.get_children():
             self.tree.delete(item)
-        for row in rows:
-            self.tree.insert("", "end", values=row)
+        for i, row in enumerate(rows):
+            txn_type = row[2]
+            base_tag = "stock_in" if txn_type == "Stock-In" else "stock_out"
+            alt_tag  = "evenrow" if i % 2 == 0 else "oddrow"
+
+            display = (
+                row[0], row[1], row[2], row[3], row[4],
+                row[7], row[8], row[9], row[5], row[6],
+            )
+            self.tree.insert("", "end", values=display,
+                             tags=(base_tag, alt_tag))
 
     def get_filters(self):
-        """Return current filter values as a dict."""
         wh_name = self.cmb_warehouse.get()
-        wh_id = self._warehouse_map.get(wh_name)  # None for "All Warehouses"
+        wh_id = self._warehouse_map.get(wh_name)
+
+        date_from_val = self.date_from.entry.get().strip()
+        date_to_val = self.date_to.entry.get().strip()
 
         return {
             "warehouse_id": wh_id,
-            "search_term": self.entry_search.get().strip() or None,
-            "txn_type": self.cmb_type.get(),
-            "date_from": self.entry_date_from.get().strip() or None,
-            "date_to": self.entry_date_to.get().strip() or None,
+            "search_term":  None,
+            "txn_type":     self.cmb_type.get(),
+            "date_from":    date_from_val if date_from_val else None,
+            "date_to":      date_to_val if date_to_val else None,
         }
 
     def on_show(self):
         if self.handler:
             self.handler.refresh()
 
-    # ── Quick date setters ───────────────────────────────────
-    def _set_date_range(self, d_from, d_to):
-        self.entry_date_from.delete(0, tk.END)
-        self.entry_date_from.insert(0, d_from)
-        self.entry_date_to.delete(0, tk.END)
-        self.entry_date_to.insert(0, d_to)
+    # ── Date presets ─────────────────────────────────────────
+    def _set_date_range(self, from_date, to_date):
+        """Helper: set both DateEntry widgets to specific dates."""
+        self.pager.reset()
+        self.date_from.entry.delete(0, tk.END)
+        self.date_from.entry.insert(0, from_date.strftime("%Y-%m-%d"))
+        self.date_to.entry.delete(0, tk.END)
+        self.date_to.entry.insert(0, to_date.strftime("%Y-%m-%d"))
         self._on_apply_filters()
 
-    def _set_today(self):
-        today = date.today().isoformat()
+    def _preset_today(self):
+        today = date.today()
         self._set_date_range(today, today)
 
-    def _set_yesterday(self):
-        yesterday = (date.today() - timedelta(days=1)).isoformat()
-        self._set_date_range(yesterday, yesterday)
-
-    def _set_this_week(self):
+    def _preset_week(self):
         today = date.today()
-        start = (today - timedelta(days=today.weekday())).isoformat()
-        self._set_date_range(start, today.isoformat())
+        monday = today - timedelta(days=today.weekday())
+        sunday = monday + timedelta(days=6)
+        self._set_date_range(monday, sunday)
 
-    def _set_this_month(self):
+    def _preset_month(self):
         today = date.today()
-        start = today.replace(day=1).isoformat()
-        self._set_date_range(start, today.isoformat())
+        first_of_month = today.replace(day=1)
+        self._set_date_range(first_of_month, today)
 
-    def _set_all_time(self):
-        self.entry_date_from.delete(0, tk.END)
-        self.entry_date_to.delete(0, tk.END)
+    def _preset_all_time(self):
+        self.pager.reset()
+        self.date_from.entry.delete(0, tk.END)
+        self.date_to.entry.delete(0, tk.END)
+        self._on_apply_filters()
+
+    def _on_filter_change(self, _event=None):
+        self.pager.reset()
         self._on_apply_filters()
 
     # ── Internal callbacks ───────────────────────────────────
@@ -219,14 +246,18 @@ class TransactionsScreen(tk.Frame):
             self.handler.apply_filters()
 
     def _on_clear_filters(self):
-        self.entry_date_from.delete(0, tk.END)
-        self.entry_date_to.delete(0, tk.END)
-        self.entry_search.delete(0, tk.END)
+        self.pager.reset()
         self.cmb_type.set("All")
         self.cmb_warehouse.set("All Warehouses")
-        if self.handler:
-            self.handler.refresh()
+        # Clear date pickers
+        self.date_from.entry.delete(0, tk.END)
+        self.date_to.entry.delete(0, tk.END)
+        self._on_apply_filters()
 
     def _on_export(self, fmt):
         if self.handler:
             self.handler.export(fmt)
+
+    def _on_page_change(self, page, page_size):
+        if self.handler:
+            self.handler.apply_filters(page=page, page_size=page_size)

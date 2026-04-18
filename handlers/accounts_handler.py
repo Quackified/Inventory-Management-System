@@ -1,32 +1,36 @@
 """
 accounts_handler.py — Business logic for account management (Admin only).
+Now supports popover-based Add/Edit in addition to toolbar Delete.
 """
 
-from tkinter import messagebox
+from gui.dialogs import show_success, show_warning, show_error, show_confirm
 from models import user_model
 
 
 class AccountsHandler:
-    """Validates form input, calls user model, refreshes the accounts screen."""
+    """Validates input, calls user model, refreshes the accounts screen."""
 
     def __init__(self, view, controller):
-        self.view = view              # AccountsScreen instance
-        self.controller = controller  # App instance
+        self.view = view
+        self.controller = controller
 
     def refresh(self):
-        """Reload all users into the Treeview."""
         rows = user_model.get_all()
         self.view.populate_table(rows)
 
-    def add(self):
-        """Validate and add a new user."""
-        data = self._validate()
-        if not data:
-            return
+    def add_from_popover(self, data):
+        """Add a user from popover form data dict."""
+        root = self.view.winfo_toplevel()
 
+        if not data["username"]:
+            show_warning(root, "Validation", "Username is required.")
+            return
+        if not data["full_name"]:
+            show_warning(root, "Validation", "Full name is required.")
+            return
         if not data["password"]:
-            messagebox.showwarning("Validation",
-                                   "Password is required for new users.")
+            show_warning(root, "Validation",
+                         "Password is required for new users.")
             return
 
         success, msg = user_model.add(
@@ -34,30 +38,28 @@ class AccountsHandler:
             data["full_name"], data["role"]
         )
         if success:
-            messagebox.showinfo("Success", msg)
-            self.view.clear_fields()
+            show_success(root, "User Added", msg)
             self.refresh()
         else:
-            messagebox.showerror("DB Error", msg)
+            show_error(root, "Database Error", msg)
 
-    def update(self):
-        """Validate and update the selected user."""
-        user_id = self.view.get_selected_id()
-        if not user_id:
-            messagebox.showwarning("Selection",
-                                   "Select a user from the table first.")
+    def update_from_popover(self, user_id, data):
+        """Update a user from popover form data dict."""
+        root = self.view.winfo_toplevel()
+
+        if not data["username"]:
+            show_warning(root, "Validation", "Username is required.")
             return
-
-        data = self._validate()
-        if not data:
+        if not data["full_name"]:
+            show_warning(root, "Validation", "Full name is required.")
             return
 
         # Prevent admin from changing their own role
         current_user = self.controller.current_user
         if current_user and str(current_user["user_id"]) == str(user_id):
             if data["role"] != current_user["role"]:
-                messagebox.showwarning("Warning",
-                                       "You cannot change your own role.")
+                show_warning(root, "Warning",
+                             "You cannot change your own role.")
                 return
 
         success, msg = user_model.update(
@@ -65,29 +67,28 @@ class AccountsHandler:
             data["role"], data["password"] if data["password"] else None
         )
         if success:
-            messagebox.showinfo("Success", msg)
-            self.view.clear_fields()
+            show_success(root, "User Updated", msg)
             self.refresh()
         else:
-            messagebox.showerror("DB Error", msg)
+            show_error(root, "Database Error", msg)
 
     def delete(self):
         """Delete the selected user after confirmation."""
+        root = self.view.winfo_toplevel()
         user_id = self.view.get_selected_id()
         if not user_id:
-            messagebox.showwarning("Selection",
-                                   "Select a user from the table first.")
+            show_warning(root, "Selection",
+                         "Select a user from the table first.")
             return
 
-        # Prevent admin from deleting themselves
         current_user = self.controller.current_user
         if current_user and str(current_user["user_id"]) == str(user_id):
-            messagebox.showwarning("Warning",
-                                   "You cannot delete your own account.")
+            show_warning(root, "Warning",
+                         "You cannot delete your own account.")
             return
 
-        confirm = messagebox.askyesno(
-            "Confirm Delete",
+        confirm = show_confirm(
+            root, "Confirm Delete",
             f"Are you sure you want to delete user #{user_id}?"
         )
         if not confirm:
@@ -95,32 +96,7 @@ class AccountsHandler:
 
         success, msg = user_model.delete(user_id)
         if success:
-            messagebox.showinfo("Success", msg)
-            self.view.clear_fields()
+            show_success(root, "User Deleted", msg)
             self.refresh()
         else:
-            messagebox.showerror("DB Error", msg)
-
-    # ── Input validation ─────────────────────────────────────
-    def _validate(self):
-        """
-        Validate form data.
-
-        Returns:
-            dict or None on failure.
-        """
-        data = self.view.get_form_data()
-
-        if not data["username"]:
-            messagebox.showwarning("Validation", "Username is required.")
-            return None
-
-        if not data["full_name"]:
-            messagebox.showwarning("Validation", "Full name is required.")
-            return None
-
-        if not data["role"]:
-            messagebox.showwarning("Validation", "Please select a role.")
-            return None
-
-        return data
+            show_error(root, "Database Error", msg)

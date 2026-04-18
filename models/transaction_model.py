@@ -7,9 +7,9 @@ from mysql.connector import Error
 
 
 def get_all(warehouse_id=None, search_term=None, txn_type=None,
-            date_from=None, date_to=None):
+            date_from=None, date_to=None, page=None, page_size=None):
     """
-    Fetch transactions with optional filters.
+    Fetch transactions with optional filters and pagination.
 
     Args:
         warehouse_id (int, optional): Filter by warehouse.
@@ -17,6 +17,8 @@ def get_all(warehouse_id=None, search_term=None, txn_type=None,
         txn_type (str, optional): 'Stock-In' or 'Stock-Out'.
         date_from (str, optional): Start date (YYYY-MM-DD).
         date_to (str, optional): End date (YYYY-MM-DD).
+        page (int, optional): 1-based page number.
+        page_size (int, optional): Rows per page.
 
     Returns:
         list[tuple]: Rows of (id, product_name, type, qty, date, remarks,
@@ -64,7 +66,13 @@ def get_all(warehouse_id=None, search_term=None, txn_type=None,
             query += " AND DATE(t.transaction_date) <= %s"
             params.append(date_to)
 
-        query += " ORDER BY t.transaction_date DESC LIMIT 500"
+        query += " ORDER BY t.transaction_date DESC"
+
+        if page and page_size:
+            query += " LIMIT %s OFFSET %s"
+            params.extend([page_size, (page - 1) * page_size])
+        else:
+            query += " LIMIT 500"
 
         cur.execute(query, tuple(params))
         rows = cur.fetchall()
@@ -73,6 +81,58 @@ def get_all(warehouse_id=None, search_term=None, txn_type=None,
     except Error as e:
         print(f"[TransactionModel] Load error: {e}")
         return []
+    finally:
+        close_connection(conn)
+
+
+def get_total_count(warehouse_id=None, search_term=None, txn_type=None,
+                    date_from=None, date_to=None):
+    """
+    Count total transactions matching filters (for pagination).
+
+    Returns:
+        int: Total matching row count.
+    """
+    conn = get_connection()
+    if not conn:
+        return 0
+    try:
+        cur = conn.cursor()
+        query = """
+            SELECT COUNT(*)
+            FROM transactions t
+            JOIN products p ON t.product_id = p.product_id
+            WHERE 1=1
+        """
+        params = []
+
+        if warehouse_id:
+            query += " AND t.warehouse_id = %s"
+            params.append(warehouse_id)
+
+        if search_term:
+            query += " AND p.name LIKE %s"
+            params.append(f"%{search_term}%")
+
+        if txn_type and txn_type != "All":
+            query += " AND t.type = %s"
+            params.append(txn_type)
+
+        if date_from:
+            query += " AND DATE(t.transaction_date) >= %s"
+            params.append(date_from)
+
+        if date_to:
+            query += " AND DATE(t.transaction_date) <= %s"
+            params.append(date_to)
+
+        cur.execute(query, tuple(params))
+        count = cur.fetchone()[0]
+        cur.close()
+        return count
+    except Error as e:
+        print(f"[TransactionModel] Count error: {e}")
+        return 0
     finally:
         close_connection(conn)
 

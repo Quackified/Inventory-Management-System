@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS products (
     expiry_status       ENUM('Active','Expired') NOT NULL DEFAULT 'Active',
     manufactured_date   DATE           NULL,
     batch_number        VARCHAR(100)   NULL,
+    is_deleted          TINYINT(1)     NOT NULL DEFAULT 0,
     created_at          DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at          DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 

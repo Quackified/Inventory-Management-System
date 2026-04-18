@@ -18,3 +18,16 @@ class DashboardHandler:
 
         recent = dashboard_model.get_recent_transactions(limit=10)
         self.view.populate_recent(recent)
+
+        wh_summary = dashboard_model.get_warehouse_summary()
+        self.view.populate_warehouse_summary(wh_summary)
+
+        chart_data = dashboard_model.get_chart_data(
+            period=self.view._chart_period
+        )
+        self.view.update_chart(chart_data)
+
+    def refresh_chart(self, period):
+        """Reload only the chart data for the given period."""
+        chart_data = dashboard_model.get_chart_data(period=period)
+        self.view.update_chart(chart_data)
