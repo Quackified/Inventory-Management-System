@@ -30,8 +30,14 @@ TRUNCATE TABLE transactions;
 TRUNCATE TABLE products;
 TRUNCATE TABLE warehouses;
 TRUNCATE TABLE categories;
--- Keep users table intact (login accounts)
+TRUNCATE TABLE users;
 SET FOREIGN_KEY_CHECKS = 1;
+
+-- ── 0. USERS ────────────────────────────────────────────────
+INSERT INTO users (username, password_hash, full_name, role, email, is_active) VALUES
+    ('admin', 'password', 'Admin', 'Admin', 'admin@example.com', 1),
+    ('manager', 'password', 'Manager', 'Manager', 'manager@example.com', 1),
+    ('clerk', 'password', 'Clerk', 'Clerk', 'clerk@example.com', 1);
 
 
 -- ── 1. WAREHOUSES ───────────────────────────────────────────
