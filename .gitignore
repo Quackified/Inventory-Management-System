@@ -1,8 +1,14 @@
 __pycache__/
 *.py[cod]
 *$py.class
+.venv/
+venv/
+env/
+frontend/node_modules/
+frontend/.vite/
+frontend/dist/
 context.md
 reference_images/
-task.md
-task2.md
-task3.md
+Task_Files/
+.setup_complete
+uploads/
