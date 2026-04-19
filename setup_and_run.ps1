@@ -42,9 +42,21 @@ function Ensure-Dependencies {
         [string]$SetupStamp
     )
 
-    if (-not $Force -and (Test-Path $SetupStamp)) {
+    $frontendNeedsInstall = $false
+    if (Test-Path (Join-Path $FrontendPath "package.json")) {
+        $reactRouterCmd = Join-Path $FrontendPath "node_modules\.bin\react-router.cmd"
+        if (-not (Test-Path $reactRouterCmd)) {
+            $frontendNeedsInstall = $true
+        }
+    }
+
+    if (-not $Force -and (Test-Path $SetupStamp) -and -not $frontendNeedsInstall) {
         Write-Host "Dependencies already set up. Use -Force to reinstall." -ForegroundColor Green
         return
+    }
+
+    if ($frontendNeedsInstall -and -not $Force) {
+        Write-Host "Frontend dependencies are missing (react-router CLI not found). Running npm install..." -ForegroundColor Yellow
     }
 
     if ($Force -and (Test-Path $VenvPath)) {
