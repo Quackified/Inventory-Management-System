@@ -1,15 +1,12 @@
-"""
-main.py — Entry point for the Inventory Management System.
+"""Legacy desktop entrypoint has been retired.
 
-Architecture: MVP (Model-View-Presenter)
-    models/     — Database operations (SQL queries)
-    gui/        — Tkinter screens (UI widgets)
-    handlers/   — Business logic (connects GUI to Models)
+Use the web stack instead:
+1) Backend API: uvicorn app.main:app --reload --app-dir backend
+2) Frontend UI: npm run dev (from frontend/)
 """
-
-from gui.root_window import App
 
 
 if __name__ == "__main__":
-    app = App()
-    app.mainloop()
+    print("Desktop (tkinter) mode is retired.")
+    print("Run backend: uvicorn app.main:app --reload --app-dir backend")
+    print("Run frontend: cd frontend && npm run dev")

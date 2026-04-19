@@ -1,0 +1,12 @@
+fastapi
+annotated-doc
+uvicorn[standard]
+python-dotenv
+pydantic-settings
+mysql-connector-python
+bcrypt
+python-jose[cryptography]
+pandas
+openpyxl
+httpx
+python-multipart

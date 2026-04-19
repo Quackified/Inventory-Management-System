@@ -23,11 +23,14 @@ CREATE TABLE IF NOT EXISTS users (
     full_name     VARCHAR(100)   NOT NULL,
     role          ENUM('Admin', 'Manager', 'Clerk') NOT NULL DEFAULT 'Clerk',
     email         VARCHAR(100)   NULL,
+    profile_image_url VARCHAR(255) NULL,
+    assigned_warehouse_id INT NULL,
     is_active     TINYINT(1)     NOT NULL DEFAULT 1,
     created_at    DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at    DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
-    PRIMARY KEY (user_id)
+    PRIMARY KEY (user_id),
+    INDEX idx_users_assigned_warehouse (assigned_warehouse_id)
 ) ENGINE=InnoDB;
 
 -- ============================================================
@@ -63,6 +66,7 @@ CREATE TABLE IF NOT EXISTS products (
     name                VARCHAR(120)   NOT NULL,
     description         TEXT           NULL,
     current_stock       INT            NOT NULL DEFAULT 0,
+    unit_price          DECIMAL(10,2)  NOT NULL DEFAULT 0.00,
     unit                VARCHAR(30)    NOT NULL DEFAULT 'pcs',
     warehouse_id        INT            NULL,
     category_id         INT            NULL,
@@ -78,6 +82,7 @@ CREATE TABLE IF NOT EXISTS products (
     PRIMARY KEY (product_id),
 
     CONSTRAINT chk_stock_non_negative CHECK (current_stock >= 0),
+    CONSTRAINT chk_unit_price_non_negative CHECK (unit_price >= 0),
 
     CONSTRAINT fk_product_warehouse
         FOREIGN KEY (warehouse_id) REFERENCES warehouses (warehouse_id)
@@ -100,6 +105,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     warehouse_id     INT            NULL,
     type             ENUM('Stock-In', 'Stock-Out') NOT NULL,
     quantity         INT            NOT NULL,
+    unit_cost        DECIMAL(10,2)  NULL,
     remarks          VARCHAR(255)   NULL,
     transaction_date DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
