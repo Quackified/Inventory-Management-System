@@ -1,5 +1,5 @@
 import axios from "axios";
-import { clearAuthSession, saveAuthSession, type UserRole } from "./auth";
+import { clearAuthSession } from "./auth";
 
 const envApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
 const baseURL = typeof envApiBaseUrl === "string" && envApiBaseUrl.trim()
@@ -12,22 +12,6 @@ export const api = axios.create({
     "Content-Type": "application/json",
   },
 });
-
-type AutoLoginResult = {
-  access_token: string;
-  user: {
-    user_id: number;
-    username: string;
-    full_name: string;
-    role: UserRole;
-    email?: string | null;
-    profile_image_url?: string | null;
-    assigned_warehouse_id?: number | null;
-    assigned_warehouse_name?: string | null;
-  };
-};
-
-let autoLoginPromise: Promise<AutoLoginResult> | null = null;
 
 export function setAuthToken(token: string | null) {
   if (token) {
@@ -65,44 +49,16 @@ api.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    const originalRequest = error.config as (typeof error.config & { _retryAuth?: boolean }) | undefined;
+    const originalRequest = error.config;
     const status = error.response?.status;
-    const requestUrl = originalRequest?.url ?? "";
-    const isLoginRequest = typeof requestUrl === "string" && requestUrl.includes("/api/v1/auth/login");
+    if (status === 401 && typeof window !== "undefined") {
+      clearAuthSession();
+      setAuthToken(null);
 
-    if (
-      status === 401 &&
-      originalRequest &&
-      !originalRequest._retryAuth &&
-      !isLoginRequest &&
-      typeof window !== "undefined"
-    ) {
-      originalRequest._retryAuth = true;
-
-      try {
-        if (!autoLoginPromise) {
-          autoLoginPromise = api
-            .post("/api/v1/auth/login", {
-              username: "admin",
-              password: "password",
-            })
-            .then((loginResponse) => loginResponse.data as AutoLoginResult)
-            .finally(() => {
-              autoLoginPromise = null;
-            });
-        }
-
-        const { access_token, user } = await autoLoginPromise;
-
-        saveAuthSession(access_token, user);
-        setAuthToken(access_token);
-
-        originalRequest.headers = originalRequest.headers ?? {};
-        originalRequest.headers.Authorization = `Bearer ${access_token}`;
-        return api.request(originalRequest);
-      } catch {
-        clearAuthSession();
-        setAuthToken(null);
+      const requestUrl = originalRequest?.url ?? "";
+      const isLoginRequest = typeof requestUrl === "string" && requestUrl.includes("/api/v1/auth/login");
+      if (!isLoginRequest) {
+        window.location.href = "/login";
       }
     }
 

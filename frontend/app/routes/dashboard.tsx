@@ -115,7 +115,7 @@ export default function DashboardRoute() {
         setError(null);
       })
       .catch((requestError) => {
-        setError(requestError instanceof Error ? requestError.message : "Failed to load dashboard");
+        setError(getApiErrorMessage(requestError, "Failed to load dashboard."));
       })
       .finally(() => setLoading(false));
   }, [navigate, page, pageSize]);
