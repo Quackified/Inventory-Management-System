@@ -269,3 +269,83 @@ def ensure_batch_tracking_support() -> bool:
     finally:
         if conn and conn.is_connected():
             conn.close()
+
+
+def recalculate_product_summary(cur, product_id: int) -> None:
+    cur.execute(
+        """
+        UPDATE products p
+        LEFT JOIN (
+            SELECT
+                product_id,
+                SUM(quantity_on_hand) AS total_stock,
+                SUM(
+                    CASE
+                        WHEN expiry_status = 'Active'
+                             AND (expiry_date IS NULL OR expiry_date > CURDATE()) THEN 1
+                        ELSE 0
+                    END
+                ) AS active_batches,
+                SUM(
+                    CASE
+                        WHEN expiry_status = 'Expired'
+                             OR (expiry_date IS NOT NULL AND expiry_date <= CURDATE()) THEN 1
+                        ELSE 0
+                    END
+                ) AS expired_batches,
+                SUM(CASE WHEN expiry_status = 'Quarantined' THEN 1 ELSE 0 END) AS quarantined_batches,
+                SUM(CASE WHEN expiry_status = 'Disposed' THEN 1 ELSE 0 END) AS disposed_batches,
+                MIN(
+                    CASE
+                        WHEN expiry_status <> 'Disposed'
+                             AND quantity_on_hand > 0
+                             AND (expiry_date IS NULL OR expiry_date > CURDATE()) THEN expiry_date
+                    END
+                ) AS next_expiry_date,
+                SUBSTRING_INDEX(
+                    GROUP_CONCAT(
+                        CASE
+                            WHEN expiry_status <> 'Disposed'
+                                 AND quantity_on_hand > 0
+                                 AND (expiry_date IS NULL OR expiry_date > CURDATE()) THEN batch_number
+                        END
+                        ORDER BY CASE WHEN expiry_date IS NULL THEN 1 ELSE 0 END, expiry_date, batch_id
+                        SEPARATOR ','
+                    ),
+                    ',',
+                    1
+                ) AS primary_batch_number
+            FROM product_batches
+            WHERE product_id = %s
+            GROUP BY product_id
+        ) batch_stats ON batch_stats.product_id = p.product_id
+        SET p.current_stock = COALESCE(batch_stats.total_stock, 0),
+            p.expiry_date = batch_stats.next_expiry_date,
+            p.batch_number = batch_stats.primary_batch_number,
+            p.expiry_status = CASE
+                WHEN COALESCE(batch_stats.total_stock, 0) <= 0
+                     AND COALESCE(batch_stats.disposed_batches, 0) > 0 THEN 'Disposed'
+                WHEN COALESCE(batch_stats.active_batches, 0) > 0
+                     AND (
+                         COALESCE(batch_stats.expired_batches, 0) > 0
+                         OR COALESCE(batch_stats.quarantined_batches, 0) > 0
+                         OR COALESCE(batch_stats.disposed_batches, 0) > 0
+                     ) THEN 'At Risk'
+                WHEN COALESCE(batch_stats.active_batches, 0) > 0 THEN 'Active'
+                WHEN COALESCE(batch_stats.quarantined_batches, 0) > 0
+                     AND COALESCE(batch_stats.active_batches, 0) = 0 THEN 'Quarantined'
+                WHEN COALESCE(batch_stats.expired_batches, 0) > 0
+                     AND COALESCE(batch_stats.active_batches, 0) = 0 THEN 'Expired'
+                ELSE 'Active'
+            END
+        WHERE p.product_id = %s
+        """,
+        (product_id, product_id),
+    )
+
+
+def recalculate_all_product_summaries(cur) -> None:
+    cur.execute("SELECT product_id FROM products WHERE is_deleted = 0")
+    product_ids = [int(row[0]) for row in cur.fetchall()]
+    for product_id in product_ids:
+        recalculate_product_summary(cur, product_id)

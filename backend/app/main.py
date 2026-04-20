@@ -16,8 +16,10 @@ from app.core.storage import UPLOADS_DIR
 from app.db.connection import (
     check_db_connection,
     ensure_batch_tracking_support,
+    get_connection,
     ensure_transaction_cost_column,
     ensure_transaction_warehouse_support,
+    recalculate_all_product_summaries,
     ensure_user_profile_columns,
 )
 
@@ -51,6 +53,18 @@ def startup_migrations():
     ensure_transaction_cost_column()
     ensure_transaction_warehouse_support()
     ensure_batch_tracking_support()
+
+    conn = None
+    try:
+        conn = get_connection()
+        if conn:
+            cur = conn.cursor()
+            recalculate_all_product_summaries(cur)
+            conn.commit()
+            cur.close()
+    finally:
+        if conn and conn.is_connected():
+            conn.close()
 
 
 @app.get("/health")

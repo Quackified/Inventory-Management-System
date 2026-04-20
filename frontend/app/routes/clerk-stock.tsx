@@ -64,6 +64,60 @@ type AllocationPreviewItem = {
 };
 
 type MovementType = "Stock-In" | "Stock-Out";
+type OperationalHealth = "Critical" | "Needs Attention" | "Low Stock" | "Active";
+type StatusFilter = "All" | OperationalHealth;
+type OrderBy = "Priority" | "NameAsc" | "StockAsc" | "StockDesc";
+
+const PAGE_SIZE = 10;
+
+function getOperationalHealth(
+  product: ProductItem,
+  hasExpiredBatch: boolean,
+  hasQuarantinedBatch: boolean,
+): OperationalHealth {
+  if (hasExpiredBatch || product.expiry_status === "Expired") return "Critical";
+  if (hasQuarantinedBatch || product.expiry_status === "Quarantined" || product.expiry_status === "At Risk" || product.expiry_status === "Disposed") {
+    return "Needs Attention";
+  }
+  if (product.current_stock <= product.low_stock_threshold) return "Low Stock";
+  return "Active";
+}
+
+function getHealthRank(health: OperationalHealth): number {
+  if (health === "Critical") return 0;
+  if (health === "Needs Attention") return 1;
+  if (health === "Low Stock") return 2;
+  return 3;
+}
+
+function getOperationalBadgeClasses(health: OperationalHealth) {
+  if (health === "Critical") return "bg-[linear-gradient(135deg,#b91c1c,#ef4444)]";
+  if (health === "Needs Attention") return "bg-[linear-gradient(135deg,#b45309,#f59e0b)]";
+  if (health === "Low Stock") return "bg-[linear-gradient(135deg,#a16207,#d97706)]";
+  return "bg-[linear-gradient(135deg,#047857,#10b981)]";
+}
+
+function shouldShowOperationalWarning(health: OperationalHealth) {
+  return health !== "Active";
+}
+
+function getStatusBadgeClasses(status: string, isLowStock: boolean) {
+  if (status === "Expired") return "bg-[linear-gradient(135deg,#b91c1c,#ef4444)]";
+  if (status === "At Risk") return "bg-[linear-gradient(135deg,#b45309,#f59e0b)]";
+  if (status === "Quarantined") return "bg-[linear-gradient(135deg,#334155,#475569)]";
+  if (status === "Disposed") return "bg-[linear-gradient(135deg,#52525b,#3f3f46)]";
+  if (isLowStock) return "bg-[linear-gradient(135deg,#a16207,#d97706)]";
+  return "bg-[linear-gradient(135deg,#047857,#10b981)]";
+}
+
+function getStatusDisplay(status: string, isLowStock: boolean) {
+  if (status === "Expired") return "Expired";
+  if (status === "At Risk") return "At Risk";
+  if (status === "Quarantined") return "Quarantined";
+  if (status === "Disposed") return "Disposed";
+  if (isLowStock) return "Low stock";
+  return "Active";
+}
 
 function allocateFefo(quantity: number, batches: ProductBatchItem[]): AllocationPreviewItem[] {
   let remaining = quantity;
@@ -99,6 +153,9 @@ export default function ClerkStockRoute() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("All");
+  const [orderBy, setOrderBy] = useState<OrderBy>("Priority");
+  const [currentPage, setCurrentPage] = useState(1);
 
   const [movementOpen, setMovementOpen] = useState(false);
   const [movementType, setMovementType] = useState<MovementType>("Stock-In");
@@ -121,20 +178,104 @@ export default function ClerkStockRoute() {
   const [movementSaving, setMovementSaving] = useState(false);
   const [movementError, setMovementError] = useState<string | null>(null);
 
+  const expiredBatchProductIds = useMemo(
+    () => new Set(expiryActions.filter((item) => item.expiry_status === "Expired").map((item) => item.product_id)),
+    [expiryActions],
+  );
+
+  const quarantinedBatchProductIds = useMemo(
+    () => new Set(expiryActions.filter((item) => item.expiry_status === "Quarantined").map((item) => item.product_id)),
+    [expiryActions],
+  );
+
   const visibleProducts = useMemo(() => {
     const normalized = search.trim().toLowerCase();
     if (!normalized) return products;
     return products.filter((item) => item.name.toLowerCase().includes(normalized));
   }, [products, search]);
 
+  const filteredProducts = useMemo(() => {
+    if (statusFilter === "All") return visibleProducts;
+    return visibleProducts.filter((item) =>
+      getOperationalHealth(
+        item,
+        expiredBatchProductIds.has(item.product_id),
+        quarantinedBatchProductIds.has(item.product_id),
+      ) === statusFilter,
+    );
+  }, [visibleProducts, statusFilter, expiredBatchProductIds, quarantinedBatchProductIds]);
+
+  const sortedProducts = useMemo(() => {
+    const list = [...filteredProducts];
+    if (orderBy === "NameAsc") {
+      list.sort((a, b) => a.name.localeCompare(b.name));
+      return list;
+    }
+    if (orderBy === "StockAsc") {
+      list.sort((a, b) => a.current_stock - b.current_stock || a.name.localeCompare(b.name));
+      return list;
+    }
+    if (orderBy === "StockDesc") {
+      list.sort((a, b) => b.current_stock - a.current_stock || a.name.localeCompare(b.name));
+      return list;
+    }
+
+    list.sort((a, b) => {
+      const rankDiff = getHealthRank(
+        getOperationalHealth(
+          a,
+          expiredBatchProductIds.has(a.product_id),
+          quarantinedBatchProductIds.has(a.product_id),
+        ),
+      ) - getHealthRank(
+        getOperationalHealth(
+          b,
+          expiredBatchProductIds.has(b.product_id),
+          quarantinedBatchProductIds.has(b.product_id),
+        ),
+      );
+      if (rankDiff !== 0) return rankDiff;
+      return a.name.localeCompare(b.name);
+    });
+    return list;
+  }, [filteredProducts, orderBy, expiredBatchProductIds, quarantinedBatchProductIds]);
+
+  const totalPages = Math.max(1, Math.ceil(sortedProducts.length / PAGE_SIZE));
+
+  const pagedProducts = useMemo(() => {
+    const safePage = Math.min(currentPage, totalPages);
+    const start = (safePage - 1) * PAGE_SIZE;
+    return sortedProducts.slice(start, start + PAGE_SIZE);
+  }, [sortedProducts, currentPage, totalPages]);
+
   const lowStockCount = useMemo(
-    () => products.filter((item) => item.current_stock <= item.low_stock_threshold).length,
-    [products],
+    () => products.filter((item) =>
+      getOperationalHealth(
+        item,
+        expiredBatchProductIds.has(item.product_id),
+        quarantinedBatchProductIds.has(item.product_id),
+      ) === "Low Stock").length,
+    [products, expiredBatchProductIds, quarantinedBatchProductIds],
   );
   const expiredProductCount = useMemo(
-    () => products.filter((item) => item.expiry_status === "Expired").length,
-    [products],
+    () => products.filter((item) =>
+      getOperationalHealth(
+        item,
+        expiredBatchProductIds.has(item.product_id),
+        quarantinedBatchProductIds.has(item.product_id),
+      ) === "Critical").length,
+    [products, expiredBatchProductIds, quarantinedBatchProductIds],
   );
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, statusFilter, orderBy]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   const stockOutQuantity = Number(quantity);
   const previewAllocations = useMemo(() => {
@@ -435,15 +576,44 @@ export default function ClerkStockRoute() {
               <p className="text-xs font-semibold uppercase tracking-[0.26em] text-emerald-700">Operational list</p>
               <h2 className="mt-2 text-2xl font-black tracking-tight text-stone-950">Pick a product to move</h2>
             </div>
-            <label className="flex min-w-[260px] items-center gap-3 rounded-full border border-emerald-200 bg-white/90 px-4 py-2.5 shadow-sm">
-              <span className="text-sm text-emerald-500">⌕</span>
-              <input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                className="w-full bg-transparent text-sm outline-none placeholder:text-stone-400"
-                placeholder="Search product"
-              />
-            </label>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <label className="flex min-w-[260px] items-center gap-3 rounded-full border border-emerald-200 bg-white/90 px-4 py-2.5 shadow-sm">
+                <span className="text-sm text-emerald-500">⌕</span>
+                <input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  className="w-full bg-transparent text-sm outline-none placeholder:text-stone-400"
+                  placeholder="Search product"
+                />
+              </label>
+              <label className="flex items-center gap-2 rounded-full border border-emerald-200 bg-white/90 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-emerald-800">
+                <span>Status</span>
+                <select
+                  value={statusFilter}
+                  onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
+                  className="rounded-full border border-emerald-200 bg-white px-2 py-1 text-[11px] font-semibold text-emerald-900 outline-none"
+                >
+                  <option value="All">All</option>
+                  <option value="Critical">Critical</option>
+                  <option value="Needs Attention">Needs Attention</option>
+                  <option value="Low Stock">Low Stock</option>
+                  <option value="Active">Active</option>
+                </select>
+              </label>
+              <label className="flex items-center gap-2 rounded-full border border-emerald-200 bg-white/90 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-emerald-800">
+                <span>Order by</span>
+                <select
+                  value={orderBy}
+                  onChange={(event) => setOrderBy(event.target.value as OrderBy)}
+                  className="rounded-full border border-emerald-200 bg-white px-2 py-1 text-[11px] font-semibold text-emerald-900 outline-none"
+                >
+                  <option value="Priority">Priority</option>
+                  <option value="NameAsc">Name A-Z</option>
+                  <option value="StockAsc">Stock low-high</option>
+                  <option value="StockDesc">Stock high-low</option>
+                </select>
+              </label>
+            </div>
           </div>
 
           <div className="overflow-x-auto">
@@ -459,28 +629,37 @@ export default function ClerkStockRoute() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-100 bg-white">
-                {visibleProducts.map((product, index) => (
+                {pagedProducts.map((product, index) => {
+                  const health = getOperationalHealth(
+                    product,
+                    expiredBatchProductIds.has(product.product_id),
+                    quarantinedBatchProductIds.has(product.product_id),
+                  );
+                  return (
                   <tr key={product.product_id} className={index % 2 === 0 ? "bg-white" : "bg-stone-50/50"}>
                     <td className="px-5 py-4 font-semibold text-stone-950">{product.name}</td>
                     <td className="px-5 py-4 text-stone-700">{product.current_stock}</td>
                     <td className="px-5 py-4 text-stone-700">{product.low_stock_threshold}</td>
                     <td className="px-5 py-4 text-stone-700">{product.unit}</td>
                     <td className="px-5 py-4">
+                      <div className="flex items-center justify-between gap-2">
                       <span
                         className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-white ${
-                          product.expiry_status === "Expired"
-                            ? "bg-[linear-gradient(135deg,#b91c1c,#ef4444)]"
-                            : product.current_stock <= product.low_stock_threshold
-                              ? "bg-[linear-gradient(135deg,#a16207,#d97706)]"
-                              : "bg-[linear-gradient(135deg,#047857,#10b981)]"
+                          getOperationalBadgeClasses(health)
                         }`}
                       >
-                        {product.expiry_status === "Expired"
-                          ? "Expired"
-                          : product.current_stock <= product.low_stock_threshold
-                            ? "Low stock"
-                            : "Active"}
+                        {health}
                       </span>
+                      {shouldShowOperationalWarning(health) && (
+                        <span
+                          className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-amber-300 bg-amber-100 text-xs font-black text-amber-700"
+                          title="Needs attention"
+                          aria-label="Needs attention"
+                        >
+                          !
+                        </span>
+                      )}
+                      </div>
                     </td>
                     <td className="px-5 py-4 text-right">
                       <div className="inline-flex gap-2">
@@ -508,8 +687,8 @@ export default function ClerkStockRoute() {
                       </div>
                     </td>
                   </tr>
-                ))}
-                {!loading && visibleProducts.length === 0 && (
+                );})}
+                {!loading && pagedProducts.length === 0 && (
                   <tr>
                     <td colSpan={6} className="px-5 py-8 text-center text-sm text-stone-500">
                       No products found.
@@ -518,6 +697,34 @@ export default function ClerkStockRoute() {
                 )}
               </tbody>
             </table>
+          </div>
+
+          <div className="flex flex-col gap-3 border-t border-emerald-100/80 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">
+              Showing {(sortedProducts.length === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1)}-
+              {Math.min(currentPage * PAGE_SIZE, sortedProducts.length)} of {sortedProducts.length}
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
+                disabled={currentPage <= 1}
+                className="rounded-full border border-stone-200 bg-white px-3 py-1.5 text-xs font-semibold text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Prev
+              </button>
+              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800">
+                Page {currentPage} / {totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
+                disabled={currentPage >= totalPages}
+                className="rounded-full border border-stone-200 bg-white px-3 py-1.5 text-xs font-semibold text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Next
+              </button>
+            </div>
           </div>
         </section>
 
@@ -554,11 +761,9 @@ export default function ClerkStockRoute() {
                       <td className="px-5 py-4 text-stone-700">{item.quantity_on_hand}</td>
                       <td className="px-5 py-4">
                         <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-white ${
-                          item.expiry_status === "Quarantined"
-                            ? "bg-[linear-gradient(135deg,#334155,#475569)]"
-                            : "bg-[linear-gradient(135deg,#b91c1c,#ef4444)]"
+                          getStatusBadgeClasses(item.expiry_status, false)
                         }`}>
-                          {item.expiry_status}
+                          {getStatusDisplay(item.expiry_status, false)}
                         </span>
                       </td>
                       <td className="px-5 py-4 text-stone-700">{item.warehouse}</td>
@@ -793,7 +998,13 @@ export default function ClerkStockRoute() {
                           <td className="px-4 py-3 text-stone-700">{batch.manufactured_date ?? "N/A"}</td>
                           <td className="px-4 py-3 text-stone-700">{batch.expiry_date ?? "N/A"}</td>
                           <td className="px-4 py-3 text-stone-700">{batch.quantity_on_hand}</td>
-                          <td className="px-4 py-3 text-stone-700">{batch.expiry_status}</td>
+                          <td className="px-4 py-3">
+                            <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-white ${
+                              getStatusBadgeClasses(batch.expiry_status, false)
+                            }`}>
+                              {getStatusDisplay(batch.expiry_status, false)}
+                            </span>
+                          </td>
                           <td className="px-4 py-3 text-right">
                             <div className="inline-flex gap-2">
                               <button
