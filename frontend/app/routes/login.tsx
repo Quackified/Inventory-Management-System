@@ -12,6 +12,26 @@ export function meta({}: Route.MetaArgs) {
   ];
 }
 
+function EyeOpenIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12s3.75-6.75 9.75-6.75S21.75 12 21.75 12 18 18.75 12 18.75 2.25 12 2.25 12Z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function EyeClosedIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5" aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M3 3l18 18" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M10.58 10.58A2 2 0 0 0 13.42 13.42" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9.88 5.26A10.7 10.7 0 0 1 12 5.25c6 0 9.75 6.75 9.75 6.75a19.7 19.7 0 0 1-4.18 4.91" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M6.23 6.23A19.2 19.2 0 0 0 2.25 12s3.75 6.75 9.75 6.75a10.8 10.8 0 0 0 5.77-1.69" />
+    </svg>
+  );
+}
+
 export async function clientAction({ request }: Route.ClientActionArgs) {
   const formData = await request.formData();
   const username = String(formData.get("username") ?? "");
@@ -40,6 +60,7 @@ export async function clientAction({ request }: Route.ClientActionArgs) {
 export default function LoginRoute() {
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("password");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -135,13 +156,24 @@ export default function LoginRoute() {
 
             <label className="block">
               <span className="mb-2 block text-sm font-semibold text-stone-700">Password</span>
-              <input
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                className="w-full rounded-2xl border border-stone-200 bg-white/85 px-4 py-3 text-stone-900 outline-none transition placeholder:text-stone-400 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
-                placeholder="password"
-              />
+              <div className="relative">
+                <input
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  className="w-full rounded-2xl border border-stone-200 bg-white/85 px-4 py-3 pr-12 text-stone-900 outline-none transition placeholder:text-stone-400 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+                  placeholder="password"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((current) => !current)}
+                  className="absolute right-3 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-stone-500 transition hover:bg-stone-100 hover:text-stone-700"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                  title={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? <EyeClosedIcon /> : <EyeOpenIcon />}
+                </button>
+              </div>
             </label>
 
             {error && <p className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}

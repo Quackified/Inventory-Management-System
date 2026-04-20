@@ -64,6 +64,7 @@ type AllocationPreviewItem = {
 };
 
 type MovementType = "Stock-In" | "Stock-Out";
+type MovementField = "quantity" | "batch_number" | "unit_price" | "manufactured_date" | "expiry_date";
 type OperationalHealth = "Critical" | "Needs Attention" | "Low Stock" | "Active";
 type StatusFilter = "All" | OperationalHealth;
 type OrderBy = "Priority" | "NameAsc" | "StockAsc" | "StockDesc";
@@ -99,6 +100,33 @@ function getOperationalBadgeClasses(health: OperationalHealth) {
 
 function shouldShowOperationalWarning(health: OperationalHealth) {
   return health !== "Active";
+}
+
+function applyFieldValidation(
+  form: HTMLFormElement,
+  errors: Partial<Record<string, string>>,
+) {
+  const elements = Array.from(form.elements) as Array<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>;
+  elements.forEach((element) => {
+    if (typeof element.setCustomValidity === "function") {
+      element.setCustomValidity("");
+    }
+  });
+
+  Object.entries(errors).forEach(([name, message]) => {
+    if (!message) return;
+    const field = form.elements.namedItem(name);
+    if (field && "setCustomValidity" in field) {
+      (field as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement).setCustomValidity(message);
+    }
+  });
+
+  const firstErrorFieldName = Object.keys(errors)[0];
+  if (!firstErrorFieldName) return;
+  const firstField = form.elements.namedItem(firstErrorFieldName);
+  if (firstField && "reportValidity" in firstField) {
+    (firstField as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement).reportValidity();
+  }
 }
 
 function getStatusBadgeClasses(status: string, isLowStock: boolean) {
@@ -177,6 +205,7 @@ export default function ClerkStockRoute() {
   const [expiryActionSavingId, setExpiryActionSavingId] = useState<number | null>(null);
   const [movementSaving, setMovementSaving] = useState(false);
   const [movementError, setMovementError] = useState<string | null>(null);
+  const [movementFieldErrors, setMovementFieldErrors] = useState<Partial<Record<MovementField, string>>>({});
 
   const expiredBatchProductIds = useMemo(
     () => new Set(expiryActions.filter((item) => item.expiry_status === "Expired").map((item) => item.product_id)),
@@ -336,6 +365,7 @@ export default function ClerkStockRoute() {
     setBatches([]);
     setBatchLoading(false);
     setMovementError(null);
+    setMovementFieldErrors({});
   }
 
   async function openMovement(product: ProductItem, type: MovementType) {
@@ -348,6 +378,7 @@ export default function ClerkStockRoute() {
     setManufacturedDate("");
     setExpiryDate("");
     setMovementError(null);
+    setMovementFieldErrors({});
     setMovementOpen(true);
 
     if (type === "Stock-Out") {
@@ -413,6 +444,8 @@ export default function ClerkStockRoute() {
     event.preventDefault();
     if (!selectedProduct) return;
 
+    const fieldErrors: Partial<Record<MovementField, string>> = {};
+
     if (!Number.isFinite(Number(selectedProduct.product_id)) || Number(selectedProduct.product_id) <= 0) {
       setMovementError("Selected product is invalid. Please refresh and try again.");
       return;
@@ -420,13 +453,11 @@ export default function ClerkStockRoute() {
 
     const parsedQuantity = Number(quantity);
     if (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0) {
-      setMovementError("Quantity must be greater than zero.");
-      return;
+      fieldErrors.quantity = "Quantity must be greater than zero.";
     }
 
     if (movementType === "Stock-In" && !batchNumber.trim()) {
-      setMovementError("Batch number is required for Clerk stock-in.");
-      return;
+      fieldErrors.batch_number = "Batch number is required for Clerk stock-in.";
     }
 
     if (
@@ -435,18 +466,23 @@ export default function ClerkStockRoute() {
       expiryDate &&
       new Date(expiryDate).getTime() < new Date(manufacturedDate).getTime()
     ) {
-      setMovementError("Expiry date cannot be earlier than manufactured date.");
-      return;
+      fieldErrors.expiry_date = "Expiry date cannot be earlier than manufactured date.";
     }
 
     const parsedUnitPrice = Number(unitPrice);
     if (movementType === "Stock-In" && (!Number.isFinite(parsedUnitPrice) || parsedUnitPrice < 0)) {
-      setMovementError("Unit price must be a valid non-negative number.");
-      return;
+      fieldErrors.unit_price = "Unit price must be a valid non-negative number.";
     }
 
     if (movementType === "Stock-Out" && previewAllocatedTotal < parsedQuantity) {
       setMovementError("Not enough non-expired batch stock available to satisfy this stock-out.");
+      return;
+    }
+
+    setMovementFieldErrors(fieldErrors);
+    if (Object.keys(fieldErrors).length > 0) {
+      applyFieldValidation(event.currentTarget, fieldErrors);
+      setMovementError(null);
       return;
     }
 
@@ -576,22 +612,21 @@ export default function ClerkStockRoute() {
               <p className="text-xs font-semibold uppercase tracking-[0.26em] text-emerald-700">Operational list</p>
               <h2 className="mt-2 text-2xl font-black tracking-tight text-stone-950">Pick a product to move</h2>
             </div>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <label className="flex min-w-[260px] items-center gap-3 rounded-full border border-emerald-200 bg-white/90 px-4 py-2.5 shadow-sm">
-                <span className="text-sm text-emerald-500">⌕</span>
+            <div className="grid w-full gap-3 sm:grid-cols-2 lg:w-auto lg:grid-cols-3">
+              <label className="flex items-center gap-3 rounded-full border border-stone-200 bg-white px-4 py-2.5 text-sm">
+                <span className="text-sm text-stone-400">⌕</span>
                 <input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  className="w-full bg-transparent text-sm outline-none placeholder:text-stone-400"
+                  className="w-full bg-transparent outline-none placeholder:text-stone-400"
                   placeholder="Search product"
                 />
               </label>
-              <label className="flex items-center gap-2 rounded-full border border-emerald-200 bg-white/90 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-emerald-800">
-                <span>Status</span>
+              <label className="flex items-center rounded-full border border-stone-200 bg-white px-4 py-2.5 text-sm">
                 <select
                   value={statusFilter}
                   onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
-                  className="rounded-full border border-emerald-200 bg-white px-2 py-1 text-[11px] font-semibold text-emerald-900 outline-none"
+                  className="w-full bg-transparent outline-none"
                 >
                   <option value="All">All</option>
                   <option value="Critical">Critical</option>
@@ -600,12 +635,11 @@ export default function ClerkStockRoute() {
                   <option value="Active">Active</option>
                 </select>
               </label>
-              <label className="flex items-center gap-2 rounded-full border border-emerald-200 bg-white/90 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-emerald-800">
-                <span>Order by</span>
+              <label className="flex items-center rounded-full border border-stone-200 bg-white px-4 py-2.5 text-sm">
                 <select
                   value={orderBy}
                   onChange={(event) => setOrderBy(event.target.value as OrderBy)}
-                  className="rounded-full border border-emerald-200 bg-white px-2 py-1 text-[11px] font-semibold text-emerald-900 outline-none"
+                  className="w-full bg-transparent outline-none"
                 >
                   <option value="Priority">Priority</option>
                   <option value="NameAsc">Name A-Z</option>
@@ -699,8 +733,8 @@ export default function ClerkStockRoute() {
             </table>
           </div>
 
-          <div className="flex flex-col gap-3 border-t border-emerald-100/80 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-stone-500">
+          <div className="flex flex-col gap-4 border-t border-stone-200/80 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-stone-500">
               Showing {(sortedProducts.length === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1)}-
               {Math.min(currentPage * PAGE_SIZE, sortedProducts.length)} of {sortedProducts.length}
             </p>
@@ -709,18 +743,18 @@ export default function ClerkStockRoute() {
                 type="button"
                 onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}
                 disabled={currentPage <= 1}
-                className="rounded-full border border-stone-200 bg-white px-3 py-1.5 text-xs font-semibold text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-full border border-stone-200 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Prev
               </button>
-              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800">
+              <span className="rounded-full border border-stone-200 bg-white px-4 py-2 text-sm font-semibold text-stone-700">
                 Page {currentPage} / {totalPages}
               </span>
               <button
                 type="button"
                 onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}
                 disabled={currentPage >= totalPages}
-                className="rounded-full border border-stone-200 bg-white px-3 py-1.5 text-xs font-semibold text-stone-700 transition hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-full border border-stone-200 bg-white px-4 py-2 text-sm font-semibold text-stone-700 transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Next
               </button>
@@ -837,9 +871,21 @@ export default function ClerkStockRoute() {
                   <input
                     type="number"
                     min="1"
+                    name="quantity"
                     value={quantity}
-                    onChange={(event) => setQuantity(event.target.value)}
-                    className="w-full rounded-2xl border border-stone-200 bg-white/90 px-4 py-3 text-stone-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+                    onChange={(event) => {
+                      setQuantity(event.target.value);
+                      if (movementFieldErrors.quantity) {
+                        setMovementFieldErrors((current) => ({ ...current, quantity: undefined }));
+                      }
+                    }}
+                    className={
+                      `w-full rounded-2xl bg-white/90 px-4 py-3 text-stone-900 outline-none transition ${
+                        movementFieldErrors.quantity
+                          ? "border border-red-300 focus:border-red-500 focus:ring-4 focus:ring-red-100"
+                          : "border border-stone-200 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+                      }`
+                    }
                   />
                 </label>
 
@@ -848,9 +894,21 @@ export default function ClerkStockRoute() {
                     <label className="block">
                       <span className="mb-2 block text-sm font-semibold text-stone-700">Batch number</span>
                       <input
+                        name="batch_number"
                         value={batchNumber}
-                        onChange={(event) => setBatchNumber(event.target.value)}
-                        className="w-full rounded-2xl border border-stone-200 bg-white/90 px-4 py-3 text-stone-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+                        onChange={(event) => {
+                          setBatchNumber(event.target.value);
+                          if (movementFieldErrors.batch_number) {
+                            setMovementFieldErrors((current) => ({ ...current, batch_number: undefined }));
+                          }
+                        }}
+                        className={
+                          `w-full rounded-2xl bg-white/90 px-4 py-3 text-stone-900 outline-none transition ${
+                            movementFieldErrors.batch_number
+                              ? "border border-red-300 focus:border-red-500 focus:ring-4 focus:ring-red-100"
+                              : "border border-stone-200 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+                          }`
+                        }
                         placeholder="Required for clerk flow"
                       />
                     </label>
@@ -859,11 +917,23 @@ export default function ClerkStockRoute() {
                       <span className="mb-2 block text-sm font-semibold text-stone-700">Unit price</span>
                       <input
                         type="number"
-                        step="0.01"
+                        name="unit_price"
                         min="0"
+                        step="0.01"
                         value={unitPrice}
-                        onChange={(event) => setUnitPrice(event.target.value)}
-                        className="w-full rounded-2xl border border-stone-200 bg-white/90 px-4 py-3 text-stone-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+                        onChange={(event) => {
+                          setUnitPrice(event.target.value);
+                          if (movementFieldErrors.unit_price) {
+                            setMovementFieldErrors((current) => ({ ...current, unit_price: undefined }));
+                          }
+                        }}
+                        className={
+                          `w-full rounded-2xl bg-white/90 px-4 py-3 text-stone-900 outline-none transition ${
+                            movementFieldErrors.unit_price
+                              ? "border border-red-300 focus:border-red-500 focus:ring-4 focus:ring-red-100"
+                              : "border border-stone-200 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+                          }`
+                        }
                       />
                     </label>
 
@@ -871,8 +941,14 @@ export default function ClerkStockRoute() {
                       <span className="mb-2 block text-sm font-semibold text-stone-700">Manufactured date</span>
                       <input
                         type="date"
+                        name="manufactured_date"
                         value={manufacturedDate}
-                        onChange={(event) => setManufacturedDate(event.target.value)}
+                        onChange={(event) => {
+                          setManufacturedDate(event.target.value);
+                          if (movementFieldErrors.manufactured_date) {
+                            setMovementFieldErrors((current) => ({ ...current, manufactured_date: undefined }));
+                          }
+                        }}
                         className="w-full rounded-2xl border border-stone-200 bg-white/90 px-4 py-3 text-stone-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
                       />
                     </label>
@@ -881,9 +957,21 @@ export default function ClerkStockRoute() {
                       <span className="mb-2 block text-sm font-semibold text-stone-700">Expiry date</span>
                       <input
                         type="date"
+                        name="expiry_date"
                         value={expiryDate}
-                        onChange={(event) => setExpiryDate(event.target.value)}
-                        className="w-full rounded-2xl border border-stone-200 bg-white/90 px-4 py-3 text-stone-900 outline-none transition focus:border-amber-500 focus:ring-4 focus:ring-amber-100"
+                        onChange={(event) => {
+                          setExpiryDate(event.target.value);
+                          if (movementFieldErrors.expiry_date) {
+                            setMovementFieldErrors((current) => ({ ...current, expiry_date: undefined }));
+                          }
+                        }}
+                        className={
+                          `w-full rounded-2xl bg-white/90 px-4 py-3 text-stone-900 outline-none transition ${
+                            movementFieldErrors.expiry_date
+                              ? "border border-red-300 focus:border-red-500 focus:ring-4 focus:ring-red-100"
+                              : "border border-stone-200 focus:border-amber-500 focus:ring-4 focus:ring-amber-100"
+                          }`
+                        }
                       />
                     </label>
                   </>
