@@ -1,7 +1,10 @@
 import axios from "axios";
 import { clearAuthSession, saveAuthSession, type UserRole } from "./auth";
 
-const baseURL = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8001";
+const envApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
+const baseURL = typeof envApiBaseUrl === "string" && envApiBaseUrl.trim()
+  ? envApiBaseUrl.trim()
+  : "http://127.0.0.1:20006";
 
 export const api = axios.create({
   baseURL,
@@ -123,6 +126,18 @@ export function getApiErrorMessage(error: unknown, fallback = "Something went wr
       const errorText = details.error;
 
       if (typeof detail === "string" && detail.trim()) return detail;
+      if (Array.isArray(detail) && detail.length > 0) {
+        const first = detail[0] as Record<string, unknown>;
+        const msg = typeof first?.msg === "string" ? first.msg.trim() : "";
+        const locArray = Array.isArray(first?.loc) ? (first.loc as unknown[]) : [];
+        const loc = locArray
+          .map((part) => String(part))
+          .filter((part) => part !== "body")
+          .join(".");
+
+        if (msg && loc) return `${loc}: ${msg}`;
+        if (msg) return msg;
+      }
       if (typeof message === "string" && message.trim()) return message;
       if (typeof errorText === "string" && errorText.trim()) return errorText;
     }

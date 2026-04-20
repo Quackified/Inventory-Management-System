@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 import type { Route } from "./+types/products";
 import { api, getApiErrorMessage } from "../lib/api";
-import { getStoredToken, getStoredUser, type AuthUser } from "../lib/auth";
+import { getRoleHomePath, getStoredToken, getStoredUser, hasRoleAccess, type AuthUser } from "../lib/auth";
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -130,8 +130,14 @@ export default function ProductsRoute() {
 
   useEffect(() => {
     const token = getStoredToken();
+    const currentUser = getStoredUser();
     if (!token) {
       navigate("/login", { replace: true });
+      return;
+    }
+
+    if (!hasRoleAccess(currentUser?.role, ["Admin", "Manager"])) {
+      navigate(getRoleHomePath(currentUser?.role), { replace: true });
       return;
     }
 

@@ -1,4 +1,5 @@
 from datetime import date
+from typing import Literal
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -45,3 +46,46 @@ class ProductMutationResponse(BaseModel):
     success: bool
     message: str
     product_id: Optional[int] = None
+
+
+class ProductBatchItem(BaseModel):
+    batch_id: int
+    product_id: int
+    batch_number: str
+    manufactured_date: Optional[date]
+    expiry_date: Optional[date]
+    expiry_status: str
+    quantity_on_hand: int
+
+
+class ProductBatchListResponse(BaseModel):
+    items: list[ProductBatchItem]
+
+
+class ExpiryActionItem(BaseModel):
+    batch_id: int
+    product_id: int
+    product_name: str
+    warehouse: str
+    batch_number: str
+    expiry_date: Optional[date]
+    expiry_status: str
+    quantity_on_hand: int
+    days_overdue: int
+
+
+class ExpiryActionListResponse(BaseModel):
+    items: list[ExpiryActionItem]
+
+
+class BatchActionRequest(BaseModel):
+    action: Literal["Quarantine", "Dispose"]
+    remarks: Optional[str] = Field(default=None, max_length=255)
+
+
+class BatchActionResponse(BaseModel):
+    success: bool
+    message: str
+    batch_id: int
+    product_id: int
+    quantity_disposed: int = 0

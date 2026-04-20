@@ -193,7 +193,7 @@ try {
     }
 
     Write-Host "Step 3/4: Starting backend API" -ForegroundColor Yellow
-    $backendPort = [int](Get-EnvValue -EnvFilePath (Join-Path $backendPath ".env") -Key "APP_PORT" -DefaultValue "8001")
+    $backendPort = [int](Get-EnvValue -EnvFilePath (Join-Path $backendPath ".env") -Key "APP_PORT" -DefaultValue "20006")
     $healthUrl = "http://127.0.0.1:$backendPort/health"
     if (Test-BackendHealth -HealthUrl $healthUrl) {
         Write-Host "Backend already healthy on $healthUrl. Reusing the existing process." -ForegroundColor Green
@@ -232,6 +232,9 @@ try {
     }
 
     Write-Host "Step 4/4: Starting frontend dev server" -ForegroundColor Yellow
+    $env:VITE_API_BASE_URL = "http://127.0.0.1:$backendPort"
+    Write-Host "Backend URL: $($env:VITE_API_BASE_URL)" -ForegroundColor DarkGray
+    Write-Host "Frontend URL: http://127.0.0.1:20005" -ForegroundColor DarkGray
     Write-Host "Starting frontend in this window..." -ForegroundColor Yellow
     Write-Host "Press Ctrl+C to stop frontend, then backend will be stopped automatically." -ForegroundColor Cyan
 

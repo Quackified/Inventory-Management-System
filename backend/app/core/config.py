@@ -12,8 +12,8 @@ class Settings(BaseSettings):
     APP_NAME: str = "Warehouse/Store Management"
     APP_ENV: str = "dev"
     APP_HOST: str = "127.0.0.1"
-    APP_PORT: int = 8001
-    CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
+    APP_PORT: int = 20006
+    CORS_ORIGINS: str = "http://localhost:20005,http://127.0.0.1:20005"
 
     JWT_SECRET_KEY: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"

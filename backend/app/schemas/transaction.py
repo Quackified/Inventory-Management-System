@@ -1,3 +1,5 @@
+from datetime import date
+
 from pydantic import BaseModel
 
 
@@ -23,6 +25,11 @@ class TransactionListResponse(BaseModel):
     total: int
 
 
+class TransactionBatchAllocation(BaseModel):
+    batch_id: int
+    quantity: int
+
+
 class TransactionWriteRequest(BaseModel):
     product_id: int
     type: str
@@ -30,6 +37,11 @@ class TransactionWriteRequest(BaseModel):
     remarks: str | None = None
     warehouse_id: int | None = None
     unit_price: float | None = None
+    batch_id: int | None = None
+    batch_number: str | None = None
+    manufactured_date: date | None = None
+    expiry_date: date | None = None
+    allocations: list[TransactionBatchAllocation] | None = None
 
 
 class TransactionMutationResponse(BaseModel):
