@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from mysql.connector import Error
 
 from app.api.deps import get_warehouse_scope, require_roles
-from app.db.connection import get_connection
+from app.db.connection import get_connection, recalculate_product_summary
 from app.schemas.transaction import (
     TransactionListItem,
     TransactionListResponse,
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/transactions", tags=["transactions"])
 
 
 def _is_expired(expiry_date: date | None) -> bool:
-    return expiry_date is not None and expiry_date < date.today()
+    return expiry_date is not None and expiry_date <= date.today()
 
 
 def _validate_allocation_quantity(allocations, expected_total: int):
@@ -36,7 +36,7 @@ def _upsert_batch_for_stock_in(cur, payload: TransactionWriteRequest):
                 manufactured_date = COALESCE(%s, manufactured_date),
                 expiry_date = COALESCE(%s, expiry_date),
                 expiry_status = CASE
-                    WHEN COALESCE(%s, expiry_date) IS NOT NULL AND COALESCE(%s, expiry_date) < CURDATE() THEN 'Expired'
+                    WHEN COALESCE(%s, expiry_date) IS NOT NULL AND COALESCE(%s, expiry_date) <= CURDATE() THEN 'Expired'
                     ELSE 'Active'
                 END
             WHERE batch_id = %s AND product_id = %s
@@ -80,7 +80,7 @@ def _upsert_batch_for_stock_in(cur, payload: TransactionWriteRequest):
             UPDATE product_batches
             SET quantity_on_hand = quantity_on_hand + %s,
                 expiry_status = CASE
-                    WHEN expiry_date IS NOT NULL AND expiry_date < CURDATE() THEN 'Expired'
+                    WHEN expiry_date IS NOT NULL AND expiry_date <= CURDATE() THEN 'Expired'
                     ELSE expiry_status
                 END
             WHERE batch_id = %s
@@ -94,7 +94,7 @@ def _upsert_batch_for_stock_in(cur, payload: TransactionWriteRequest):
         INSERT INTO product_batches
         (product_id, batch_number, manufactured_date, expiry_date, expiry_status, quantity_on_hand)
         VALUES (%s, %s, %s, %s,
-                CASE WHEN %s IS NOT NULL AND %s < CURDATE() THEN 'Expired' ELSE 'Active' END,
+            CASE WHEN %s IS NOT NULL AND %s <= CURDATE() THEN 'Expired' ELSE 'Active' END,
                 %s)
         """,
         (
@@ -165,7 +165,7 @@ def _consume_with_fefo(cur, payload: TransactionWriteRequest):
         WHERE product_id = %s
           AND quantity_on_hand > 0
           AND expiry_status NOT IN ('Disposed', 'Quarantined')
-          AND (expiry_date IS NULL OR expiry_date >= CURDATE())
+          AND (expiry_date IS NULL OR expiry_date > CURDATE())
         ORDER BY CASE WHEN expiry_date IS NULL THEN 1 ELSE 0 END,
                  expiry_date,
                  manufactured_date,
@@ -397,6 +397,8 @@ def record_transaction(
                     "UPDATE products SET unit_price = %s WHERE product_id = %s",
                     (payload.unit_price, payload.product_id),
                 )
+            if has_batch_input:
+                recalculate_product_summary(cur, payload.product_id)
         else:
             consumed_batches: list[tuple[int, int]] = []
             if payload.allocations:
@@ -450,6 +452,8 @@ def record_transaction(
                 "UPDATE products SET current_stock = current_stock - %s WHERE product_id = %s",
                 (payload.quantity, payload.product_id),
             )
+            if consumed_batches:
+                recalculate_product_summary(cur, payload.product_id)
 
         conn.commit()
         cur.close()

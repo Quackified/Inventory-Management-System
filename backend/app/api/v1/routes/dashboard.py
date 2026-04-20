@@ -30,6 +30,41 @@ def get_dashboard_summary(
             warehouse_filter = " AND warehouse_id = %s"
             warehouse_params.append(warehouse_scope)
 
+        expired_query = """
+            SELECT COUNT(*) AS cnt
+            FROM products p
+            LEFT JOIN (
+                SELECT
+                    product_id,
+                    SUM(
+                        CASE
+                            WHEN expiry_status = 'Active'
+                                 AND (expiry_date IS NULL OR expiry_date >= CURDATE()) THEN 1
+                            ELSE 0
+                        END
+                    ) AS active_batches,
+                    SUM(
+                        CASE
+                            WHEN expiry_status = 'Expired'
+                                 OR (expiry_date IS NOT NULL AND expiry_date < CURDATE()) THEN 1
+                            ELSE 0
+                        END
+                    ) AS expired_batches,
+                    SUM(CASE WHEN expiry_status = 'Quarantined' THEN 1 ELSE 0 END) AS quarantined_batches,
+                    SUM(CASE WHEN expiry_status = 'Disposed' THEN 1 ELSE 0 END) AS disposed_batches,
+                    SUM(quantity_on_hand) AS remaining_stock
+                FROM product_batches
+                GROUP BY product_id
+            ) batch_stats ON batch_stats.product_id = p.product_id
+            WHERE p.is_deleted = 0
+        """
+        expired_params: list[object] = []
+        if warehouse_scope is not None:
+            expired_query += " AND p.warehouse_id = %s"
+            expired_params.append(warehouse_scope)
+        expired_query += " AND (COALESCE(batch_stats.disposed_batches, 0) > 0 AND COALESCE(batch_stats.remaining_stock, 0) <= 0"
+        expired_query += " OR (COALESCE(batch_stats.active_batches, 0) = 0 AND COALESCE(batch_stats.expired_batches, 0) > 0))"
+
         cur.execute(
             f"SELECT COUNT(*) AS total FROM products WHERE is_deleted = 0{warehouse_filter}",
             tuple(warehouse_params),
@@ -55,10 +90,7 @@ def get_dashboard_summary(
         )
         low_stock_count = int(cur.fetchone()["cnt"])
 
-        cur.execute(
-            f"SELECT COUNT(*) AS cnt FROM products WHERE expiry_status = 'Expired' AND is_deleted = 0{warehouse_filter}",
-            tuple(warehouse_params),
-        )
+        cur.execute(expired_query, tuple(expired_params))
         expired_count = int(cur.fetchone()["cnt"])
 
         cur.close()
@@ -145,10 +177,41 @@ def get_warehouse_summary(
                    COUNT(p.product_id) AS product_count,
                    COALESCE(SUM(p.current_stock), 0) AS total_stock,
                    COALESCE(SUM(p.current_stock * p.unit_price), 0) AS total_value,
-                   SUM(CASE WHEN p.expiry_status = 'Expired' THEN 1 ELSE 0 END) AS expired_count,
+                   SUM(
+                       CASE
+                           WHEN COALESCE(batch_stats.remaining_stock, 0) <= 0
+                                AND COALESCE(batch_stats.disposed_batches, 0) > 0 THEN 1
+                           WHEN COALESCE(batch_stats.active_batches, 0) = 0
+                                AND COALESCE(batch_stats.expired_batches, 0) > 0 THEN 1
+                           ELSE 0
+                       END
+                   ) AS expired_count,
                    SUM(CASE WHEN p.current_stock < p.low_stock_threshold THEN 1 ELSE 0 END) AS low_stock_count
             FROM warehouses w
             LEFT JOIN products p ON w.warehouse_id = p.warehouse_id AND p.is_deleted = 0
+            LEFT JOIN (
+                SELECT
+                    product_id,
+                    SUM(
+                        CASE
+                            WHEN expiry_status = 'Active'
+                                 AND (expiry_date IS NULL OR expiry_date >= CURDATE()) THEN 1
+                            ELSE 0
+                        END
+                    ) AS active_batches,
+                    SUM(
+                        CASE
+                            WHEN expiry_status = 'Expired'
+                                 OR (expiry_date IS NOT NULL AND expiry_date < CURDATE()) THEN 1
+                            ELSE 0
+                        END
+                    ) AS expired_batches,
+                    SUM(CASE WHEN expiry_status = 'Quarantined' THEN 1 ELSE 0 END) AS quarantined_batches,
+                    SUM(CASE WHEN expiry_status = 'Disposed' THEN 1 ELSE 0 END) AS disposed_batches,
+                    SUM(quantity_on_hand) AS remaining_stock
+                FROM product_batches
+                GROUP BY product_id
+            ) batch_stats ON batch_stats.product_id = p.product_id
             WHERE w.is_active = 1{warehouse_filter}
             GROUP BY w.warehouse_id, w.name
             ORDER BY w.name

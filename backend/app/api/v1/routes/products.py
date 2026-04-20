@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from mysql.connector import Error
 
 from app.api.deps import get_warehouse_scope, require_roles
-from app.db.connection import get_connection
+from app.db.connection import get_connection, recalculate_product_summary
 from app.schemas.product import (
     BatchActionRequest,
     BatchActionResponse,
@@ -51,15 +51,50 @@ def list_products(
                    COALESCE(w.name, '—') AS warehouse,
                    COALESCE(c.name, '—') AS category,
                    p.low_stock_threshold,
-                                     p.expiry_date,
-                                     CASE
-                                         WHEN p.expiry_date IS NOT NULL AND p.expiry_date < CURDATE() THEN 'Expired'
-                                         ELSE 'Active'
-                                     END AS expiry_status,
+                   p.expiry_date,
+                   CASE
+                       WHEN COALESCE(batch_stats.remaining_stock, 0) <= 0
+                            AND COALESCE(batch_stats.disposed_batches, 0) > 0 THEN 'Disposed'
+                       WHEN COALESCE(batch_stats.active_batches, 0) > 0
+                            AND (
+                                COALESCE(batch_stats.expired_batches, 0) > 0
+                                OR COALESCE(batch_stats.quarantined_batches, 0) > 0
+                                OR COALESCE(batch_stats.disposed_batches, 0) > 0
+                            ) THEN 'At Risk'
+                       WHEN COALESCE(batch_stats.active_batches, 0) > 0 THEN 'Active'
+                       WHEN COALESCE(batch_stats.quarantined_batches, 0) > 0
+                            AND COALESCE(batch_stats.active_batches, 0) = 0 THEN 'Quarantined'
+                       WHEN COALESCE(batch_stats.expired_batches, 0) > 0
+                            AND COALESCE(batch_stats.active_batches, 0) = 0 THEN 'Expired'
+                       ELSE 'Active'
+                   END AS expiry_status,
                    p.manufactured_date, p.batch_number
             FROM products p
             LEFT JOIN warehouses w ON p.warehouse_id = w.warehouse_id
             LEFT JOIN categories c ON p.category_id = c.category_id
+            LEFT JOIN (
+                SELECT
+                    product_id,
+                    SUM(
+                        CASE
+                            WHEN expiry_status = 'Active'
+                                 AND (expiry_date IS NULL OR expiry_date > CURDATE()) THEN 1
+                            ELSE 0
+                        END
+                    ) AS active_batches,
+                    SUM(
+                        CASE
+                            WHEN expiry_status = 'Expired'
+                                 OR (expiry_date IS NOT NULL AND expiry_date <= CURDATE()) THEN 1
+                            ELSE 0
+                        END
+                    ) AS expired_batches,
+                    SUM(CASE WHEN expiry_status = 'Quarantined' THEN 1 ELSE 0 END) AS quarantined_batches,
+                    SUM(CASE WHEN expiry_status = 'Disposed' THEN 1 ELSE 0 END) AS disposed_batches,
+                    SUM(quantity_on_hand) AS remaining_stock
+                FROM product_batches
+                GROUP BY product_id
+            ) batch_stats ON batch_stats.product_id = p.product_id
             WHERE p.is_deleted = 0
         """
         data_params: list[object] = []
@@ -128,13 +163,13 @@ def list_expiry_actions(
                    pb.expiry_date,
                    CASE
                      WHEN pb.expiry_status IN ('Quarantined', 'Disposed') THEN pb.expiry_status
-                     WHEN pb.expiry_date IS NOT NULL AND pb.expiry_date < CURDATE() THEN 'Expired'
+                                         WHEN pb.expiry_date IS NOT NULL AND pb.expiry_date <= CURDATE() THEN 'Expired'
                      ELSE 'Active'
                    END AS live_status,
                    pb.quantity_on_hand,
                    CASE
                      WHEN pb.expiry_date IS NULL THEN 0
-                     WHEN pb.expiry_date < CURDATE() THEN DATEDIFF(CURDATE(), pb.expiry_date)
+                                         WHEN pb.expiry_date <= CURDATE() THEN DATEDIFF(CURDATE(), pb.expiry_date)
                      ELSE 0
                    END AS days_overdue
             FROM product_batches pb
@@ -143,7 +178,7 @@ def list_expiry_actions(
             WHERE pb.quantity_on_hand > 0
               AND (
                     pb.expiry_status = 'Quarantined'
-                    OR (pb.expiry_date IS NOT NULL AND pb.expiry_date < CURDATE())
+                                        OR (pb.expiry_date IS NOT NULL AND pb.expiry_date <= CURDATE())
                   )
         """
         params: list[object] = []
@@ -231,6 +266,7 @@ def handle_batch_action(
                 "UPDATE product_batches SET expiry_status = 'Quarantined' WHERE batch_id = %s",
                 (batch_id,),
             )
+            recalculate_product_summary(cur, product_id)
             conn.commit()
             cur.close()
             return BatchActionResponse(
@@ -277,6 +313,7 @@ def handle_batch_action(
                 batch_id,
             ),
         )
+        recalculate_product_summary(cur, product_id)
 
         conn.commit()
         cur.close()
@@ -331,7 +368,7 @@ def list_product_batches(
                    pb.expiry_date,
                    CASE
                      WHEN pb.expiry_status IN ('Quarantined', 'Disposed') THEN pb.expiry_status
-                     WHEN pb.expiry_date IS NOT NULL AND pb.expiry_date < CURDATE() THEN 'Expired'
+                                         WHEN pb.expiry_date IS NOT NULL AND pb.expiry_date <= CURDATE() THEN 'Expired'
                      ELSE 'Active'
                    END AS live_status,
                    pb.quantity_on_hand
