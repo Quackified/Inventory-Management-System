@@ -190,7 +190,7 @@ def get_chart_data(
         warehouse_filter = ""
         warehouse_params: list[object] = []
         if warehouse_scope is not None:
-            warehouse_filter = "AND t.warehouse_id = %s"
+            warehouse_filter = "AND warehouse_id = %s"
             warehouse_params.append(warehouse_scope)
         cur.execute(
             """
