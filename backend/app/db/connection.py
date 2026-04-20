@@ -108,6 +108,70 @@ def ensure_transaction_cost_column() -> bool:
             conn.close()
 
 
+def ensure_transaction_warehouse_support() -> bool:
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'transactions'
+              AND COLUMN_NAME = 'warehouse_id'
+            """
+        )
+        has_warehouse_column = int(cur.fetchone()[0]) > 0
+        if not has_warehouse_column:
+            cur.execute("ALTER TABLE transactions ADD COLUMN warehouse_id INT NULL AFTER user_id")
+
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM INFORMATION_SCHEMA.STATISTICS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'transactions'
+              AND INDEX_NAME = 'idx_txn_warehouse'
+            """
+        )
+        has_warehouse_index = int(cur.fetchone()[0]) > 0
+        if not has_warehouse_index:
+            cur.execute("CREATE INDEX idx_txn_warehouse ON transactions (warehouse_id)")
+
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'transactions'
+              AND COLUMN_NAME = 'warehouse_id'
+              AND REFERENCED_TABLE_NAME = 'warehouses'
+            """
+        )
+        has_warehouse_fk = int(cur.fetchone()[0]) > 0
+        if not has_warehouse_fk:
+            cur.execute(
+                """
+                ALTER TABLE transactions
+                ADD CONSTRAINT fk_txn_warehouse
+                FOREIGN KEY (warehouse_id) REFERENCES warehouses (warehouse_id)
+                ON UPDATE CASCADE
+                ON DELETE SET NULL
+                """
+            )
+
+        conn.commit()
+        cur.close()
+        return True
+    except Error:
+        return False
+    finally:
+        if conn and conn.is_connected():
+            conn.close()
+
+
 def ensure_batch_tracking_support() -> bool:
     conn = None
     try:

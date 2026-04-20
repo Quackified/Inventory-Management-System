@@ -17,6 +17,7 @@ from app.db.connection import (
     check_db_connection,
     ensure_batch_tracking_support,
     ensure_transaction_cost_column,
+    ensure_transaction_warehouse_support,
     ensure_user_profile_columns,
 )
 
@@ -48,6 +49,7 @@ app.mount("/uploads", StaticFiles(directory=str(UPLOADS_DIR)), name="uploads")
 def startup_migrations():
     ensure_user_profile_columns()
     ensure_transaction_cost_column()
+    ensure_transaction_warehouse_support()
     ensure_batch_tracking_support()
 
 

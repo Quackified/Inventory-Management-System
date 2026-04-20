@@ -69,8 +69,8 @@ def get_dashboard_summary(
             low_stock_count=low_stock_count,
             expired_count=expired_count,
         )
-    except Error:
-        raise HTTPException(status_code=500, detail="Failed to load dashboard summary")
+    except Error as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to load dashboard summary: {exc}")
     finally:
         conn.close()
 
@@ -90,7 +90,7 @@ def get_recent_transactions(
         warehouse_filter = ""
         warehouse_params: list[object] = []
         if warehouse_scope is not None:
-            warehouse_filter = "WHERE t.warehouse_id = %s"
+            warehouse_filter = "WHERE COALESCE(t.warehouse_id, p.warehouse_id) = %s"
             warehouse_params.append(warehouse_scope)
         cur.execute(
             """
@@ -117,8 +117,8 @@ def get_recent_transactions(
             )
             for row in rows
         ]
-    except Error:
-        raise HTTPException(status_code=500, detail="Failed to load recent transactions")
+    except Error as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to load recent transactions: {exc}")
     finally:
         conn.close()
 
@@ -168,8 +168,8 @@ def get_warehouse_summary(
             )
             for row in rows
         ]
-    except Error:
-        raise HTTPException(status_code=500, detail="Failed to load warehouse summary")
+    except Error as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to load warehouse summary: {exc}")
     finally:
         conn.close()
 
@@ -187,40 +187,70 @@ def get_chart_data(
         days = 7 if period == "weekly" else 30
         cur = conn.cursor(dictionary=True)
         warehouse_scope = get_warehouse_scope(current_user)
-        warehouse_filter = ""
-        warehouse_params: list[object] = []
+
+        query = """
+            SELECT t.transaction_date, t.type, t.quantity
+            FROM transactions t
+            JOIN products p ON p.product_id = t.product_id
+            WHERE 1 = 1
+        """
+        params: list[object] = []
         if warehouse_scope is not None:
-            warehouse_filter = "AND warehouse_id = %s"
-            warehouse_params.append(warehouse_scope)
-        cur.execute(
-            """
-            SELECT DATE(transaction_date) AS day,
-                   DAYNAME(DATE(transaction_date)) AS day_name,
-                   SUM(CASE WHEN type = 'Stock-In' THEN quantity ELSE 0 END) AS stock_in,
-                   SUM(CASE WHEN type = 'Stock-Out' THEN quantity ELSE 0 END) AS stock_out
-            FROM transactions
-            WHERE transaction_date >= DATE_SUB(CURDATE(), INTERVAL %s DAY)
-            {warehouse_filter}
-            GROUP BY DATE(transaction_date), DAYNAME(DATE(transaction_date))
-            ORDER BY day
-            """.format(warehouse_filter=f" {warehouse_filter}" if warehouse_filter else ""),
-            tuple([days] + warehouse_params),
-        )
+            query += " AND COALESCE(t.warehouse_id, p.warehouse_id) = %s"
+            params.append(warehouse_scope)
+
+        query += " ORDER BY t.transaction_date DESC LIMIT 5000"
+        cur.execute(query, tuple(params))
         rows = cur.fetchall()
         cur.close()
 
-        chart = []
+        # Aggregate by transaction day and keep only the most recent N distinct days.
+        day_buckets: dict[str, dict[str, int | str]] = {}
+        ordered_days: list[str] = []
         for row in rows:
-            label = row["day_name"][:3] if period == "weekly" else str(row["day"].day)
+            tx_dt = row.get("transaction_date")
+            if tx_dt is None:
+                continue
+
+            day_key = tx_dt.strftime("%Y-%m-%d")
+            if day_key not in day_buckets:
+                day_buckets[day_key] = {
+                    "day_name": tx_dt.strftime("%a"),
+                    "day_of_month": tx_dt.day,
+                    "stock_in": 0,
+                    "stock_out": 0,
+                }
+                ordered_days.append(day_key)
+
+            tx_type = str(row.get("type") or "")
+            qty = int(row.get("quantity") or 0)
+            if tx_type == "Stock-In":
+                day_buckets[day_key]["stock_in"] = int(day_buckets[day_key]["stock_in"]) + qty
+            elif tx_type == "Stock-Out":
+                day_buckets[day_key]["stock_out"] = int(day_buckets[day_key]["stock_out"]) + qty
+
+            if len(ordered_days) >= days:
+                # Keep collecting rows for already discovered day keys only.
+                # Stop once rows move beyond the oldest captured key.
+                oldest_kept_day = ordered_days[-1]
+                if day_key < oldest_kept_day:
+                    break
+
+        selected_days = sorted(ordered_days[:days])
+        chart: list[DashboardChartItem] = []
+        for day_key in selected_days:
+            bucket = day_buckets[day_key]
+            label = str(bucket["day_name"]) if period == "weekly" else str(bucket["day_of_month"])
             chart.append(
                 DashboardChartItem(
                     label=label,
-                    stock_in=int(row["stock_in"] or 0),
-                    stock_out=int(row["stock_out"] or 0),
+                    stock_in=int(bucket["stock_in"]),
+                    stock_out=int(bucket["stock_out"]),
                 )
             )
+
         return chart
-    except Error:
-        raise HTTPException(status_code=500, detail="Failed to load chart data")
+    except Error as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to load chart data: {exc}")
     finally:
         conn.close()
