@@ -80,3 +80,62 @@ Before public deployment:
 - update `CORS_ORIGINS` to your real frontend domain
 - replace default seed credentials
 - disable development `--reload` process style for backend
+
+## Role-Based UX Update (Clerk Batch Flow)
+
+The Clerk role now has a dedicated operational page:
+
+- Route: `/clerk-stock`
+- Home redirect for Clerk users now lands on this page
+- Focus: batch-aware Stock-In and FEFO-driven Stock-Out
+
+### What Clerk Can Do
+
+- Record Stock-In with explicit batch metadata:
+	- `batch_number` (required in Clerk flow)
+	- `manufactured_date` (optional)
+	- `expiry_date` (optional)
+- Record Stock-Out with FEFO allocation preview using available non-expired batches
+- Review low-stock and expired-product indicators in one operational screen
+
+### Backend Additions
+
+- New table: `product_batches`
+- New nullable column on `transactions`: `batch_id`
+- Startup migration support auto-adds these for existing databases
+- New endpoint:
+	- `GET /api/v1/products/{product_id}/batches?only_available=true`
+
+### Transaction API (Backward Compatible)
+
+`POST /api/v1/transactions` still accepts old payloads, and now also supports batch fields:
+
+```json
+{
+	"product_id": 1,
+	"type": "Stock-In",
+	"quantity": 25,
+	"batch_number": "BATCH-2026-04-20-A",
+	"manufactured_date": "2026-04-01",
+	"expiry_date": "2026-10-01",
+	"unit_price": 12.5,
+	"remarks": "Supplier delivery"
+}
+```
+
+Stock-Out can submit explicit multi-batch allocations:
+
+```json
+{
+	"product_id": 1,
+	"type": "Stock-Out",
+	"quantity": 12,
+	"allocations": [
+		{ "batch_id": 3, "quantity": 7 },
+		{ "batch_id": 5, "quantity": 5 }
+	],
+	"remarks": "Issue to production"
+}
+```
+
+If `allocations` are omitted, the backend applies FEFO automatically (non-expired, available batches first).

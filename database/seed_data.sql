@@ -7,6 +7,7 @@ USE inventory_db;
 
 SET FOREIGN_KEY_CHECKS = 0;
 TRUNCATE TABLE transactions;
+TRUNCATE TABLE product_batches;
 TRUNCATE TABLE products;
 TRUNCATE TABLE warehouses;
 TRUNCATE TABLE categories;
@@ -111,6 +112,36 @@ VALUES
     ('Surf Detergent', 'Surf detergent powder 1kg', 66, 30.00, 'pack', @wh_west, @cat_hhp, 14, '2027-02-01', 'Active', '2026-02-01', 'B-SU-001', 0),
     ('Chippy Barbecue', 'Chippy barbecue corn chips', 95, 9.50, 'pcs', @wh_west, @cat_snk, 20, '2027-08-08', 'Active', '2026-08-08', 'B-CHP-001', 0),
     ('Energen Chocolate', 'Energen chocolate cereal drink', 130, 14.00, 'pack', @wh_west, @cat_dry, 25, '2027-03-30', 'Active', '2026-03-30', 'B-EN-001', 0);
+
+-- Seed batch inventory per product for FEFO + expiry action workflows
+INSERT INTO product_batches
+    (product_id, batch_number, manufactured_date, expiry_date, expiry_status, quantity_on_hand)
+SELECT
+    p.product_id,
+    COALESCE(p.batch_number, CONCAT('AUTO-BATCH-', p.product_id)),
+    p.manufactured_date,
+    p.expiry_date,
+    CASE
+        WHEN p.expiry_status IN ('Quarantined', 'Disposed') THEN p.expiry_status
+        WHEN p.expiry_date IS NOT NULL AND p.expiry_date < CURDATE() THEN 'Expired'
+        ELSE 'Active'
+    END,
+    p.current_stock
+FROM products p
+WHERE p.is_deleted = 0;
+
+-- Create explicit actionable rows for Clerk expiry workflow demos
+UPDATE product_batches pb
+JOIN products p ON p.product_id = pb.product_id
+SET pb.expiry_status = 'Quarantined',
+    pb.expiry_date = DATE_SUB(CURDATE(), INTERVAL 5 DAY)
+WHERE p.name = 'Yakult Original';
+
+UPDATE product_batches pb
+JOIN products p ON p.product_id = pb.product_id
+SET pb.expiry_status = 'Expired',
+    pb.expiry_date = DATE_SUB(CURDATE(), INTERVAL 20 DAY)
+WHERE p.name = 'Cream Silk Conditioner';
 
 SET @p1 = (SELECT product_id FROM products WHERE name = 'Century Tuna Flakes' LIMIT 1);
 SET @p2 = (SELECT product_id FROM products WHERE name = 'Argentina Corned Beef' LIMIT 1);

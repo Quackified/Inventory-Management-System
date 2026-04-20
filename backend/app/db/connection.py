@@ -106,3 +106,102 @@ def ensure_transaction_cost_column() -> bool:
     finally:
         if conn and conn.is_connected():
             conn.close()
+
+
+def ensure_batch_tracking_support() -> bool:
+    conn = None
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'product_batches'
+            """
+        )
+        has_batch_table = int(cur.fetchone()[0]) > 0
+        if not has_batch_table:
+            cur.execute(
+                """
+                CREATE TABLE product_batches (
+                    batch_id           INT AUTO_INCREMENT,
+                    product_id         INT NOT NULL,
+                    batch_number       VARCHAR(100) NOT NULL,
+                    manufactured_date  DATE NULL,
+                    expiry_date        DATE NULL,
+                    expiry_status      ENUM('Active','Expired','Quarantined','Disposed') NOT NULL DEFAULT 'Active',
+                    quantity_on_hand   INT NOT NULL DEFAULT 0,
+                    created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    PRIMARY KEY (batch_id),
+                    CONSTRAINT chk_batch_quantity_non_negative CHECK (quantity_on_hand >= 0),
+                    CONSTRAINT fk_batch_product
+                        FOREIGN KEY (product_id) REFERENCES products (product_id)
+                        ON UPDATE CASCADE
+                        ON DELETE CASCADE,
+                    UNIQUE KEY uq_batch_identity (product_id, batch_number, manufactured_date, expiry_date),
+                    INDEX idx_batch_product (product_id),
+                    INDEX idx_batch_expiry (expiry_date)
+                ) ENGINE=InnoDB
+                """
+            )
+
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'transactions'
+              AND COLUMN_NAME = 'batch_id'
+            """
+        )
+        has_batch_id_column = int(cur.fetchone()[0]) > 0
+        if not has_batch_id_column:
+            cur.execute("ALTER TABLE transactions ADD COLUMN batch_id INT NULL AFTER remarks")
+
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM INFORMATION_SCHEMA.STATISTICS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'transactions'
+              AND INDEX_NAME = 'idx_txn_batch'
+            """
+        )
+        has_batch_index = int(cur.fetchone()[0]) > 0
+        if not has_batch_index:
+            cur.execute("CREATE INDEX idx_txn_batch ON transactions (batch_id)")
+
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = 'transactions'
+              AND COLUMN_NAME = 'batch_id'
+              AND REFERENCED_TABLE_NAME = 'product_batches'
+            """
+        )
+        has_batch_fk = int(cur.fetchone()[0]) > 0
+        if not has_batch_fk:
+            cur.execute(
+                """
+                ALTER TABLE transactions
+                ADD CONSTRAINT fk_txn_batch
+                FOREIGN KEY (batch_id) REFERENCES product_batches (batch_id)
+                ON UPDATE CASCADE
+                ON DELETE SET NULL
+                """
+            )
+
+        conn.commit()
+        cur.close()
+        return True
+    except Error:
+        return False
+    finally:
+        if conn and conn.is_connected():
+            conn.close()

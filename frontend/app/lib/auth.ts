@@ -38,8 +38,11 @@ export function clearAuthSession() {
 }
 
 export function getRoleHomePath(role: UserRole | string | null | undefined) {
-  if (role === "Admin" || role === "Manager" || role === "Clerk") {
+  if (role === "Admin" || role === "Manager") {
     return "/dashboard";
+  }
+  if (role === "Clerk") {
+    return "/clerk-stock";
   }
   return "/login";
 }

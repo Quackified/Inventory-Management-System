@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router";
-import { api } from "../lib/api";
-import { getStoredToken } from "../lib/auth";
+import { api, getApiErrorMessage } from "../lib/api";
+import { getRoleHomePath, getStoredToken, getStoredUser, hasRoleAccess } from "../lib/auth";
 import type { Route } from "./+types/dashboard";
 import {
   Area,
@@ -65,6 +65,10 @@ type ChartDataItem = {
 
 export default function DashboardRoute() {
   const navigate = useNavigate();
+  const envApiBaseUrl = import.meta.env.VITE_API_BASE_URL;
+  const backendConnectionUrl = typeof envApiBaseUrl === "string" && envApiBaseUrl.trim()
+    ? envApiBaseUrl.trim()
+    : "http://127.0.0.1:20006";
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [recentTransactions, setRecentTransactions] = useState<RecentTransactionItem[]>([]);
@@ -74,14 +78,22 @@ export default function DashboardRoute() {
   const [pageSize] = useState(5);
   const [totalProducts, setTotalProducts] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [resettingDb, setResettingDb] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [today, setToday] = useState<{ day: string; date: string }>({ day: "--", date: "--" });
   const [chartsReady, setChartsReady] = useState(false);
 
   useEffect(() => {
     const token = getStoredToken();
+    const currentUser = getStoredUser();
     if (!token) {
       navigate("/login", { replace: true });
+      return;
+    }
+
+    if (!hasRoleAccess(currentUser?.role, ["Admin", "Manager"])) {
+      navigate(getRoleHomePath(currentUser?.role), { replace: true });
       return;
     }
 
@@ -107,6 +119,45 @@ export default function DashboardRoute() {
       })
       .finally(() => setLoading(false));
   }, [navigate, page, pageSize]);
+
+  async function resetDatabaseForTesting() {
+    const user = getStoredUser();
+    if (user?.role !== "Admin") {
+      setError("Only Admin can reset the database.");
+      return;
+    }
+
+    const typed = window.prompt("Type RESETDB to confirm database reset for testing.", "");
+    if ((typed ?? "").trim().toUpperCase() !== "RESETDB") {
+      return;
+    }
+
+    setResettingDb(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await api.post("/api/v1/admin/reset-db");
+      setNotice(response.data?.message ?? "Database reset completed.");
+      setPage(1);
+      const refreshed = await Promise.all([
+        api.get("/api/v1/dashboard/summary"),
+        api.get("/api/v1/products", { params: { page: 1, page_size: pageSize } }),
+        api.get("/api/v1/dashboard/recent-transactions", { params: { limit: 6 } }),
+        api.get("/api/v1/dashboard/warehouse-summary"),
+        api.get("/api/v1/dashboard/chart-data", { params: { period: "weekly" } }),
+      ]);
+      setSummary(refreshed[0].data as DashboardSummary);
+      setProducts((refreshed[1].data.items ?? []) as ProductItem[]);
+      setRecentTransactions((refreshed[2].data ?? []) as RecentTransactionItem[]);
+      setWarehouseSummary((refreshed[3].data ?? []) as WarehouseSummaryItem[]);
+      setChartData((refreshed[4].data ?? []) as ChartDataItem[]);
+      setTotalProducts(refreshed[1].data.total ?? 0);
+    } catch (requestError) {
+      setError(getApiErrorMessage(requestError, "Failed to reset database."));
+    } finally {
+      setResettingDb(false);
+    }
+  }
 
   useEffect(() => {
     const now = new Date();
@@ -158,6 +209,26 @@ export default function DashboardRoute() {
         </header>
 
         {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+        {notice && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{notice}</div>}
+
+        {getStoredUser()?.role === "Admin" && (
+          <section className="rounded-xl border border-amber-200/80 bg-amber-50/70 px-4 py-3 shadow-sm">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-amber-700">Testing Utility</p>
+                <p className="mt-1 text-sm text-amber-900">Reset database from the UI (schema + seed). Admin only.</p>
+              </div>
+              <button
+                type="button"
+                onClick={resetDatabaseForTesting}
+                disabled={resettingDb}
+                className="rounded-full border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-800 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {resettingDb ? "Resetting..." : "Reset DB"}
+              </button>
+            </div>
+          </section>
+        )}
 
         <section className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-5">
             {[
@@ -269,7 +340,7 @@ export default function DashboardRoute() {
 
             <section className="rounded-xl border border-white/70 bg-white/82 p-4 shadow-[0_14px_30px_rgba(16,185,129,0.07)] backdrop-blur-xl">
               <p className="text-xs font-semibold uppercase tracking-[0.22em] text-emerald-700">Connection</p>
-              <p className="mt-2 text-sm text-stone-600">Backend: {import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8001"}</p>
+              <p className="mt-2 text-sm text-stone-600">Backend: {backendConnectionUrl}</p>
               <p className="mt-1 text-sm text-stone-600">Dashboard fetch: {loading ? "Loading..." : "Ready"}</p>
             </section>
           </aside>

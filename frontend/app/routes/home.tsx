@@ -2,7 +2,14 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import type { Route } from "./+types/home";
 import { api, setAuthToken } from "../lib/api";
-import { clearAuthSession, getStoredToken, getStoredUser, saveAuthSession, type UserRole } from "../lib/auth";
+import {
+  clearAuthSession,
+  getRoleHomePath,
+  getStoredToken,
+  getStoredUser,
+  saveAuthSession,
+  type UserRole,
+} from "../lib/auth";
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -28,7 +35,7 @@ export default function Home() {
         try {
           await api.get("/api/v1/auth/me");
           if (!cancelled) {
-            navigate("/dashboard", { replace: true });
+            navigate(getRoleHomePath(user.role), { replace: true });
           }
           return;
         } catch {
@@ -61,7 +68,7 @@ export default function Home() {
         saveAuthSession(access_token, loggedInUser);
         setAuthToken(access_token);
         if (!cancelled) {
-          navigate("/dashboard", { replace: true });
+          navigate(getRoleHomePath(loggedInUser.role), { replace: true });
         }
         return;
       } catch {

@@ -96,7 +96,36 @@ CREATE TABLE IF NOT EXISTS products (
 ) ENGINE=InnoDB;
 
 -- ============================================================
--- 5. TRANSACTIONS  (Stock-In / Stock-Out ledger)
+-- 5. PRODUCT_BATCHES  (Batch-level stock and expiry tracking)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS product_batches (
+    batch_id           INT            AUTO_INCREMENT,
+    product_id         INT            NOT NULL,
+    batch_number       VARCHAR(100)   NOT NULL,
+    manufactured_date  DATE           NULL,
+    expiry_date        DATE           NULL,
+    expiry_status      ENUM('Active','Expired','Quarantined','Disposed') NOT NULL DEFAULT 'Active',
+    quantity_on_hand   INT            NOT NULL DEFAULT 0,
+    created_at         DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at         DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (batch_id),
+
+    CONSTRAINT chk_batch_quantity_non_negative CHECK (quantity_on_hand >= 0),
+
+    CONSTRAINT fk_batch_product
+        FOREIGN KEY (product_id) REFERENCES products (product_id)
+        ON UPDATE CASCADE
+        ON DELETE CASCADE,
+
+    UNIQUE KEY uq_batch_identity (product_id, batch_number, manufactured_date, expiry_date),
+
+    INDEX idx_batch_product (product_id),
+    INDEX idx_batch_expiry (expiry_date)
+) ENGINE=InnoDB;
+
+-- ============================================================
+-- 6. TRANSACTIONS  (Stock-In / Stock-Out ledger)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS transactions (
     transaction_id   INT            AUTO_INCREMENT,
@@ -107,6 +136,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     quantity         INT            NOT NULL,
     unit_cost        DECIMAL(10,2)  NULL,
     remarks          VARCHAR(255)   NULL,
+    batch_id         INT            NULL,
     transaction_date DATETIME       NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     PRIMARY KEY (transaction_id),
@@ -128,8 +158,14 @@ CREATE TABLE IF NOT EXISTS transactions (
         ON UPDATE CASCADE
         ON DELETE SET NULL,
 
+    CONSTRAINT fk_txn_batch
+        FOREIGN KEY (batch_id) REFERENCES product_batches (batch_id)
+        ON UPDATE CASCADE
+        ON DELETE SET NULL,
+
     INDEX idx_txn_product (product_id),
     INDEX idx_txn_user    (user_id),
     INDEX idx_txn_warehouse (warehouse_id),
+    INDEX idx_txn_batch   (batch_id),
     INDEX idx_txn_date    (transaction_date)
 ) ENGINE=InnoDB;

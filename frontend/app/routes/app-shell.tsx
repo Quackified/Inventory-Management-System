@@ -11,6 +11,7 @@ import {
   ChevronRight,
   LayoutDashboard,
   LogOut,
+  ScanBarcode,
   Tags,
   UserCog,
   UserRound,
@@ -25,8 +26,9 @@ type NavItem = {
 };
 
 const navItems: NavItem[] = [
-  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["Admin", "Manager", "Clerk"] },
-  { to: "/products", label: "Products", icon: Boxes, roles: ["Admin", "Manager", "Clerk"] },
+  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["Admin", "Manager"] },
+  { to: "/clerk-stock", label: "Stock Flow", icon: ScanBarcode, roles: ["Admin", "Manager", "Clerk"] },
+  { to: "/products", label: "Products", icon: Boxes, roles: ["Admin", "Manager"] },
   { to: "/transactions", label: "Transactions", icon: BookOpen, roles: ["Admin", "Manager"] },
   { to: "/warehouses", label: "Warehouses", icon: Warehouse, roles: ["Admin", "Manager"] },
   { to: "/categories", label: "Categories", icon: Tags, roles: ["Admin", "Manager"] },
