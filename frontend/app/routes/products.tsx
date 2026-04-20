@@ -58,6 +58,15 @@ type ProductFormState = {
   batch_number: string;
 };
 
+type ProductFormField =
+  | "name"
+  | "current_stock"
+  | "unit_price"
+  | "low_stock_threshold"
+  | "expiry_date";
+
+type MovementFormField = "quantity" | "unit_price";
+
 type LookupItem = {
   warehouse_id?: number;
   category_id?: number;
@@ -98,6 +107,33 @@ function normalizeDate(value: string) {
   return value ? value : null;
 }
 
+function applyFieldValidation(
+  form: HTMLFormElement,
+  errors: Partial<Record<string, string>>,
+) {
+  const elements = Array.from(form.elements) as Array<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>;
+  elements.forEach((element) => {
+    if (typeof element.setCustomValidity === "function") {
+      element.setCustomValidity("");
+    }
+  });
+
+  Object.entries(errors).forEach(([name, message]) => {
+    if (!message) return;
+    const field = form.elements.namedItem(name);
+    if (field && "setCustomValidity" in field) {
+      (field as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement).setCustomValidity(message);
+    }
+  });
+
+  const firstErrorFieldName = Object.keys(errors)[0];
+  if (!firstErrorFieldName) return;
+  const firstField = form.elements.namedItem(firstErrorFieldName);
+  if (firstField && "reportValidity" in firstField) {
+    (firstField as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement).reportValidity();
+  }
+}
+
 export default function ProductsRoute() {
   const navigate = useNavigate();
   const [user, setUser] = useState<AuthUser | null>(getStoredUser());
@@ -123,6 +159,8 @@ export default function ProductsRoute() {
   const [movementForm, setMovementForm] = useState<MovementFormState>(emptyMovementForm);
   const [movementSaving, setMovementSaving] = useState(false);
   const [movementError, setMovementError] = useState<string | null>(null);
+  const [formFieldErrors, setFormFieldErrors] = useState<Partial<Record<ProductFormField, string>>>({});
+  const [movementFieldErrors, setMovementFieldErrors] = useState<Partial<Record<MovementFormField, string>>>({});
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(totalProducts / pageSize)), [pageSize, totalProducts]);
   const currentRole = user?.role ?? "";
@@ -164,6 +202,7 @@ export default function ProductsRoute() {
     setEditProductId(null);
     setForm(emptyForm);
     setFormError(null);
+    setFormFieldErrors({});
     setFormOpen(true);
   }
 
@@ -178,6 +217,7 @@ export default function ProductsRoute() {
       remarks: "",
     });
     setMovementError(null);
+    setMovementFieldErrors({});
     setMovementOpen(true);
   }
 
@@ -197,6 +237,7 @@ export default function ProductsRoute() {
       batch_number: product.batch_number ?? "",
     });
     setFormError(null);
+    setFormFieldErrors({});
     setFormOpen(true);
   }
 
@@ -204,6 +245,7 @@ export default function ProductsRoute() {
     setFormOpen(false);
     setEditProductId(null);
     setFormError(null);
+    setFormFieldErrors({});
     setSaving(false);
   }
 
@@ -211,6 +253,7 @@ export default function ProductsRoute() {
     setMovementOpen(false);
     setMovementProduct(null);
     setMovementError(null);
+    setMovementFieldErrors({});
     setMovementSaving(false);
   }
 
@@ -218,21 +261,31 @@ export default function ProductsRoute() {
     event.preventDefault();
     setSaving(true);
     setFormError(null);
+    const fieldErrors: Partial<Record<ProductFormField, string>> = {};
 
+    if (!form.name.trim()) {
+      fieldErrors.name = "Product name is required.";
+    }
     if (!Number.isFinite(Number(form.current_stock)) || Number(form.current_stock) < 0) {
-      setFormError("Current stock must be a valid number (0 or higher).");
-      setSaving(false);
-      return;
+      fieldErrors.current_stock = "Current stock must be 0 or higher.";
     }
-
     if (!Number.isFinite(Number(form.unit_price)) || Number(form.unit_price) < 0) {
-      setFormError("Cost price must be a valid number (0 or higher).");
-      setSaving(false);
-      return;
+      fieldErrors.unit_price = "Cost price must be 0 or higher.";
+    }
+    if (!Number.isFinite(Number(form.low_stock_threshold)) || Number(form.low_stock_threshold) < 0) {
+      fieldErrors.low_stock_threshold = "Low stock threshold must be 0 or higher.";
+    }
+    if (
+      form.expiry_date &&
+      form.manufactured_date &&
+      new Date(form.expiry_date).getTime() < new Date(form.manufactured_date).getTime()
+    ) {
+      fieldErrors.expiry_date = "Expiry date cannot be earlier than manufactured date.";
     }
 
-    if (!Number.isFinite(Number(form.low_stock_threshold)) || Number(form.low_stock_threshold) < 0) {
-      setFormError("Low stock threshold must be a valid number (0 or higher).");
+    setFormFieldErrors(fieldErrors);
+    if (Object.keys(fieldErrors).length > 0) {
+      applyFieldValidation(event.currentTarget, fieldErrors);
       setSaving(false);
       return;
     }
@@ -320,15 +373,22 @@ export default function ProductsRoute() {
 
     setMovementSaving(true);
     setMovementError(null);
+    const fieldErrors: Partial<Record<MovementFormField, string>> = {};
 
     if (!Number.isFinite(Number(movementForm.quantity)) || Number(movementForm.quantity) <= 0) {
-      setMovementError("Quantity must be a number greater than zero.");
-      setMovementSaving(false);
-      return;
+      fieldErrors.quantity = "Quantity must be greater than zero.";
     }
 
-    if (movementForm.type === "Stock-In" && movementForm.unit_price && Number(movementForm.unit_price) < 0) {
-      setMovementError("Unit price cannot be a negative number.");
+    if (
+      movementForm.type === "Stock-In" &&
+      (!Number.isFinite(Number(movementForm.unit_price)) || Number(movementForm.unit_price) < 0)
+    ) {
+      fieldErrors.unit_price = "Unit price must be 0 or higher.";
+    }
+
+    setMovementFieldErrors(fieldErrors);
+    if (Object.keys(fieldErrors).length > 0) {
+      applyFieldValidation(event.currentTarget, fieldErrors);
       setMovementSaving(false);
       return;
     }
@@ -608,9 +668,22 @@ export default function ProductsRoute() {
                 <label className="block md:col-span-2">
                   <span className="mb-2 block text-sm font-semibold text-stone-700">Product name</span>
                   <input
+                    name="name"
+                    required
                     value={form.name}
-                    onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
-                    className="w-full rounded-2xl border border-stone-200 bg-white/90 px-4 py-3 text-stone-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+                    onChange={(event) => {
+                      setForm((current) => ({ ...current, name: event.target.value }));
+                      if (formFieldErrors.name) {
+                        setFormFieldErrors((current) => ({ ...current, name: undefined }));
+                      }
+                    }}
+                    className={
+                      `w-full rounded-2xl bg-white/90 px-4 py-3 text-stone-900 outline-none transition ${
+                        formFieldErrors.name
+                          ? "border border-red-300 focus:border-red-500 focus:ring-4 focus:ring-red-100"
+                          : "border border-stone-200 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+                      }`
+                    }
                     placeholder="Example product"
                   />
                 </label>
@@ -629,9 +702,22 @@ export default function ProductsRoute() {
                   <span className="mb-2 block text-sm font-semibold text-stone-700">Current stock</span>
                   <input
                     type="number"
+                    name="current_stock"
+                    min="0"
                     value={form.current_stock}
-                    onChange={(event) => setForm((current) => ({ ...current, current_stock: event.target.value }))}
-                    className="w-full rounded-2xl border border-stone-200 bg-white/90 px-4 py-3 text-stone-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+                    onChange={(event) => {
+                      setForm((current) => ({ ...current, current_stock: event.target.value }));
+                      if (formFieldErrors.current_stock) {
+                        setFormFieldErrors((current) => ({ ...current, current_stock: undefined }));
+                      }
+                    }}
+                    className={
+                      `w-full rounded-2xl bg-white/90 px-4 py-3 text-stone-900 outline-none transition ${
+                        formFieldErrors.current_stock
+                          ? "border border-red-300 focus:border-red-500 focus:ring-4 focus:ring-red-100"
+                          : "border border-stone-200 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+                      }`
+                    }
                   />
                   <p className="mt-1 text-xs text-stone-500">Numbers only. Use whole numbers (e.g. 0, 5, 120).</p>
                 </label>
@@ -640,10 +726,23 @@ export default function ProductsRoute() {
                   <span className="mb-2 block text-sm font-semibold text-stone-700">Cost price</span>
                   <input
                     type="number"
+                    name="unit_price"
+                    min="0"
                     step="0.01"
                     value={form.unit_price}
-                    onChange={(event) => setForm((current) => ({ ...current, unit_price: event.target.value }))}
-                    className="w-full rounded-2xl border border-stone-200 bg-white/90 px-4 py-3 text-stone-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+                    onChange={(event) => {
+                      setForm((current) => ({ ...current, unit_price: event.target.value }));
+                      if (formFieldErrors.unit_price) {
+                        setFormFieldErrors((current) => ({ ...current, unit_price: undefined }));
+                      }
+                    }}
+                    className={
+                      `w-full rounded-2xl bg-white/90 px-4 py-3 text-stone-900 outline-none transition ${
+                        formFieldErrors.unit_price
+                          ? "border border-red-300 focus:border-red-500 focus:ring-4 focus:ring-red-100"
+                          : "border border-stone-200 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+                      }`
+                    }
                   />
                   <p className="mt-1 text-xs text-stone-500">Numbers only. Decimal values are allowed (e.g. 24.75).</p>
                 </label>
@@ -662,9 +761,22 @@ export default function ProductsRoute() {
                   <span className="mb-2 block text-sm font-semibold text-stone-700">Low stock threshold</span>
                   <input
                     type="number"
+                    name="low_stock_threshold"
+                    min="0"
                     value={form.low_stock_threshold}
-                    onChange={(event) => setForm((current) => ({ ...current, low_stock_threshold: event.target.value }))}
-                    className="w-full rounded-2xl border border-stone-200 bg-white/90 px-4 py-3 text-stone-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+                    onChange={(event) => {
+                      setForm((current) => ({ ...current, low_stock_threshold: event.target.value }));
+                      if (formFieldErrors.low_stock_threshold) {
+                        setFormFieldErrors((current) => ({ ...current, low_stock_threshold: undefined }));
+                      }
+                    }}
+                    className={
+                      `w-full rounded-2xl bg-white/90 px-4 py-3 text-stone-900 outline-none transition ${
+                        formFieldErrors.low_stock_threshold
+                          ? "border border-red-300 focus:border-red-500 focus:ring-4 focus:ring-red-100"
+                          : "border border-stone-200 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+                      }`
+                    }
                   />
                   <p className="mt-1 text-xs text-stone-500">Numbers only. Set the minimum stock alert level.</p>
                 </label>
@@ -709,22 +821,34 @@ export default function ProductsRoute() {
                 </label>
 
                 <label className="block">
-                  <span className="mb-2 block text-sm font-semibold text-stone-700">Expiry date</span>
-                  <input
-                    type="date"
-                    value={form.expiry_date}
-                    onChange={(event) => setForm((current) => ({ ...current, expiry_date: event.target.value }))}
-                    className="w-full rounded-2xl border border-stone-200 bg-white/90 px-4 py-3 text-stone-900 outline-none transition focus:border-amber-500 focus:ring-4 focus:ring-amber-100"
-                  />
-                </label>
-
-                <label className="block">
                   <span className="mb-2 block text-sm font-semibold text-stone-700">Manufactured date</span>
                   <input
                     type="date"
                     value={form.manufactured_date}
                     onChange={(event) => setForm((current) => ({ ...current, manufactured_date: event.target.value }))}
                     className="w-full rounded-2xl border border-stone-200 bg-white/90 px-4 py-3 text-stone-900 outline-none transition focus:border-amber-500 focus:ring-4 focus:ring-amber-100"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="mb-2 block text-sm font-semibold text-stone-700">Expiry date</span>
+                  <input
+                    type="date"
+                    name="expiry_date"
+                    value={form.expiry_date}
+                    onChange={(event) => {
+                      setForm((current) => ({ ...current, expiry_date: event.target.value }));
+                      if (formFieldErrors.expiry_date) {
+                        setFormFieldErrors((current) => ({ ...current, expiry_date: undefined }));
+                      }
+                    }}
+                    className={
+                      `w-full rounded-2xl bg-white/90 px-4 py-3 text-stone-900 outline-none transition ${
+                        formFieldErrors.expiry_date
+                          ? "border border-red-300 focus:border-red-500 focus:ring-4 focus:ring-red-100"
+                          : "border border-stone-200 focus:border-amber-500 focus:ring-4 focus:ring-amber-100"
+                      }`
+                    }
                   />
                 </label>
 
@@ -813,9 +937,21 @@ export default function ProductsRoute() {
                 <input
                   type="number"
                   min="1"
+                  name="quantity"
                   value={movementForm.quantity}
-                  onChange={(event) => setMovementForm((current) => ({ ...current, quantity: event.target.value }))}
-                  className="w-full rounded-2xl border border-stone-200 bg-white/90 px-4 py-3 text-stone-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+                  onChange={(event) => {
+                    setMovementForm((current) => ({ ...current, quantity: event.target.value }));
+                    if (movementFieldErrors.quantity) {
+                      setMovementFieldErrors((current) => ({ ...current, quantity: undefined }));
+                    }
+                  }}
+                  className={
+                    `w-full rounded-2xl bg-white/90 px-4 py-3 text-stone-900 outline-none transition ${
+                      movementFieldErrors.quantity
+                        ? "border border-red-300 focus:border-red-500 focus:ring-4 focus:ring-red-100"
+                        : "border border-stone-200 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+                    }`
+                  }
                 />
               </label>
 
@@ -840,10 +976,23 @@ export default function ProductsRoute() {
                   <span className="mb-2 block text-sm font-semibold text-stone-700">Unit price</span>
                   <input
                     type="number"
+                    name="unit_price"
+                    min="0"
                     step="0.01"
                     value={movementForm.unit_price}
-                    onChange={(event) => setMovementForm((current) => ({ ...current, unit_price: event.target.value }))}
-                    className="w-full rounded-2xl border border-stone-200 bg-white/90 px-4 py-3 text-stone-900 outline-none transition focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+                    onChange={(event) => {
+                      setMovementForm((current) => ({ ...current, unit_price: event.target.value }));
+                      if (movementFieldErrors.unit_price) {
+                        setMovementFieldErrors((current) => ({ ...current, unit_price: undefined }));
+                      }
+                    }}
+                    className={
+                      `w-full rounded-2xl bg-white/90 px-4 py-3 text-stone-900 outline-none transition ${
+                        movementFieldErrors.unit_price
+                          ? "border border-red-300 focus:border-red-500 focus:ring-4 focus:ring-red-100"
+                          : "border border-stone-200 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+                      }`
+                    }
                   />
                 </label>
               ) : (
